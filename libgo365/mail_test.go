@@ -432,3 +432,244 @@ func TestSendMailWithCcAndBcc(t *testing.T) {
 		t.Fatalf("SendMail failed: %v", err)
 	}
 }
+
+func TestExtractPageToken(t *testing.T) {
+	tests := []struct {
+		name      string
+		nextLink  string
+		wantToken string
+	}{
+		{
+			name:      "empty string",
+			nextLink:  "",
+			wantToken: "",
+		},
+		{
+			name:      "with skiptoken",
+			nextLink:  "https://graph.microsoft.com/v1.0/me/messages?$skiptoken=abc123xyz",
+			wantToken: "abc123xyz",
+		},
+		{
+			name:      "with skip",
+			nextLink:  "https://graph.microsoft.com/v1.0/me/messages?$skip=50&$top=50",
+			wantToken: "50",
+		},
+		{
+			name:      "with both skiptoken and skip (skiptoken wins)",
+			nextLink:  "https://graph.microsoft.com/v1.0/me/messages?$skip=50&$skiptoken=abc123",
+			wantToken: "abc123",
+		},
+		{
+			name:      "with other params",
+			nextLink:  "https://graph.microsoft.com/v1.0/me/messages?$top=50&$skiptoken=xyz789&$count=true",
+			wantToken: "xyz789",
+		},
+		{
+			name:      "invalid URL",
+			nextLink:  "not a valid url %%",
+			wantToken: "",
+		},
+		{
+			name:      "no pagination params",
+			nextLink:  "https://graph.microsoft.com/v1.0/me/messages?$top=50",
+			wantToken: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractPageToken(tt.nextLink)
+			if got != tt.wantToken {
+				t.Errorf("ExtractPageToken(%q) = %q, want %q", tt.nextLink, got, tt.wantToken)
+			}
+		})
+	}
+}
+
+func TestListMessagesWithPagination(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := MessageList{
+			Value: []*Message{
+				{ID: "msg1", Subject: "Message 1"},
+				{ID: "msg2", Subject: "Message 2"},
+			},
+			NextLink: "https://graph.microsoft.com/v1.0/me/messages?$skiptoken=next123",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  &http.Client{},
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	resp, err := client.ListMessagesWithPagination(ctx, nil)
+
+	if err != nil {
+		t.Fatalf("ListMessagesWithPagination failed: %v", err)
+	}
+
+	if len(resp.Messages) != 2 {
+		t.Errorf("Expected 2 messages, got %d", len(resp.Messages))
+	}
+
+	if !resp.HasMore {
+		t.Error("Expected HasMore=true")
+	}
+
+	if resp.NextPageToken != "next123" {
+		t.Errorf("Expected NextPageToken=next123, got %s", resp.NextPageToken)
+	}
+
+	if resp.Count != 2 {
+		t.Errorf("Expected Count=2, got %d", resp.Count)
+	}
+}
+
+func TestListMessagesWithPaginationNoMore(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := MessageList{
+			Value: []*Message{
+				{ID: "msg1", Subject: "Message 1"},
+			},
+			// No NextLink - last page
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  &http.Client{},
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	resp, err := client.ListMessagesWithPagination(ctx, nil)
+
+	if err != nil {
+		t.Fatalf("ListMessagesWithPagination failed: %v", err)
+	}
+
+	if resp.HasMore {
+		t.Error("Expected HasMore=false")
+	}
+
+	if resp.NextPageToken != "" {
+		t.Errorf("Expected empty NextPageToken, got %s", resp.NextPageToken)
+	}
+}
+
+func TestListMessagesWithSkipOption(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		skipParam := r.URL.Query().Get("$skip")
+		if skipParam != "50" {
+			t.Errorf("Expected $skip=50, got %s", skipParam)
+		}
+
+		response := MessageList{
+			Value: []*Message{},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  &http.Client{},
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	opts := &ListMessagesOptions{
+		Skip: 50,
+	}
+	_, err := client.ListMessagesWithPagination(ctx, opts)
+
+	if err != nil {
+		t.Fatalf("ListMessagesWithPagination failed: %v", err)
+	}
+}
+
+func TestListMessagesWithPageToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		skiptokenParam := r.URL.Query().Get("$skiptoken")
+		if skiptokenParam != "abc123xyz" {
+			t.Errorf("Expected $skiptoken=abc123xyz, got %s", skiptokenParam)
+		}
+
+		response := MessageList{
+			Value: []*Message{},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  &http.Client{},
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	opts := &ListMessagesOptions{
+		PageToken: "abc123xyz",
+	}
+	_, err := client.ListMessagesWithPagination(ctx, opts)
+
+	if err != nil {
+		t.Fatalf("ListMessagesWithPagination failed: %v", err)
+	}
+}
+
+func TestListMessagesPageTokenTakesPrecedence(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// PageToken should take precedence, so $skiptoken should be set, not $skip
+		skiptokenParam := r.URL.Query().Get("$skiptoken")
+		skipParam := r.URL.Query().Get("$skip")
+
+		if skiptokenParam != "token123" {
+			t.Errorf("Expected $skiptoken=token123, got %s", skiptokenParam)
+		}
+
+		if skipParam != "" {
+			t.Errorf("Expected no $skip when PageToken is set, got %s", skipParam)
+		}
+
+		response := MessageList{
+			Value: []*Message{},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  &http.Client{},
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	opts := &ListMessagesOptions{
+		Skip:      100, // Should be ignored
+		PageToken: "token123",
+	}
+	_, err := client.ListMessagesWithPagination(ctx, opts)
+
+	if err != nil {
+		t.Fatalf("ListMessagesWithPagination failed: %v", err)
+	}
+}
