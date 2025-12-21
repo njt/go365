@@ -39,7 +39,7 @@ func NewTokenCache() (*TokenCache, error) {
 	}, nil
 }
 
-// Replace implements cache.ExportReplace
+// Replace implements cache.ExportReplace.Replace
 func (tc *TokenCache) Replace(ctx context.Context, cache cache.Unmarshaler, hints cache.ReplaceHints) error {
 	data, err := os.ReadFile(tc.cachePath)
 	if err != nil {
@@ -56,7 +56,7 @@ func (tc *TokenCache) Replace(ctx context.Context, cache cache.Unmarshaler, hint
 	return nil
 }
 
-// Export implements cache.ExportReplace
+// Export implements cache.ExportReplace.Export
 func (tc *TokenCache) Export(ctx context.Context, cache cache.Marshaler, hints cache.ExportHints) error {
 	data, err := cache.Marshal()
 	if err != nil {
