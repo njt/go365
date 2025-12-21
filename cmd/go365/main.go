@@ -492,7 +492,7 @@ var mailSendCmd = &cobra.Command{
 func init() {
 	// mail list flags
 	mailListCmd.Flags().String("folder-id", "", "Folder ID (e.g., inbox, sentitems)")
-	mailListCmd.Flags().Int("top", 10, "Number of messages to retrieve")
+	mailListCmd.Flags().Int("top", 0, "Number of messages to retrieve (default: 100)")
 
 	// mail send flags
 	mailSendCmd.Flags().String("subject", "", "Email subject (required)")

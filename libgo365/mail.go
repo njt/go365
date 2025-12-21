@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+const (
+	// DefaultMessageLimit is the default number of messages to retrieve
+	DefaultMessageLimit = 100
+)
+
 // Message represents an email message from Microsoft Graph
 type Message struct {
 	ID                   string       `json:"id,omitempty"`
@@ -77,7 +82,7 @@ func (c *Client) ListMessages(ctx context.Context, opts *ListMessagesOptions) ([
 
 	// Build query parameters
 	params := url.Values{}
-	params.Set("$top", "100")
+	params.Set("$top", fmt.Sprintf("%d", DefaultMessageLimit))
 	
 	if opts != nil {
 		if opts.Top > 0 {
