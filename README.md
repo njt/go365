@@ -72,7 +72,7 @@ go365 status
 
 - `go365 mail list` - List email messages from your mailbox
   - `--folder-id` - Specify folder (e.g., inbox, sentitems)
-  - `--top` - Number of messages to retrieve (default: 10)
+  - `--top` - Number of messages to retrieve (default: 100)
 - `go365 mail get <message-id>` - Get a specific email message by ID
 - `go365 mail send` - Send an email message
   - `--subject` - Email subject (required)
