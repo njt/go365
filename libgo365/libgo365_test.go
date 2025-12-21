@@ -12,7 +12,7 @@ import (
 func TestTokenStore(t *testing.T) {
 	// Create a temporary directory for testing
 	tmpDir := t.TempDir()
-	
+
 	ts := &TokenStore{
 		tokenPath: filepath.Join(tmpDir, "token.json"),
 	}
@@ -59,7 +59,7 @@ func TestTokenStore(t *testing.T) {
 func TestConfigManager(t *testing.T) {
 	// Create a temporary directory for testing
 	tmpDir := t.TempDir()
-	
+
 	cm := &ConfigManager{
 		configPath: filepath.Join(tmpDir, "config.json"),
 	}
@@ -106,7 +106,7 @@ func TestConfigManager(t *testing.T) {
 func TestConfigManagerDefaults(t *testing.T) {
 	// Create a temporary directory for testing
 	tmpDir := t.TempDir()
-	
+
 	cm := &ConfigManager{
 		configPath: filepath.Join(tmpDir, "config.json"),
 	}
