@@ -27,11 +27,9 @@ func main() {
 
 	// Create authenticator
 	authConfig := libgo365.AuthConfig{
-		TenantID:     config.TenantID,
-		ClientID:     config.ClientID,
-		ClientSecret: config.ClientSecret,
-		RedirectURL:  config.RedirectURL,
-		Scopes:       config.Scopes,
+		TenantID: config.TenantID,
+		ClientID: config.ClientID,
+		Scopes:   config.Scopes,
 	}
 
 	auth, err := libgo365.NewAuthenticator(authConfig)
@@ -40,15 +38,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Get token
-	token, err := auth.GetToken(ctx)
+	// Get access token
+	accessToken, err := auth.GetAccessToken(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Not authenticated. Please run 'go365 login' first.\n")
 		os.Exit(1)
 	}
 
 	// Create Microsoft Graph client
-	client := libgo365.NewClient(ctx, token, auth.GetConfig())
+	client := libgo365.NewClient(ctx, accessToken)
 
 	// Get current user information
 	userInfo, err := client.GetMe(ctx)

@@ -9,11 +9,9 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	TenantID     string   `json:"tenant_id,omitempty"`
-	ClientID     string   `json:"client_id,omitempty"`
-	ClientSecret string   `json:"client_secret,omitempty"`
-	RedirectURL  string   `json:"redirect_url,omitempty"`
-	Scopes       []string `json:"scopes,omitempty"`
+	TenantID string   `json:"tenant_id,omitempty"`
+	ClientID string   `json:"client_id,omitempty"`
+	Scopes   []string `json:"scopes,omitempty"`
 }
 
 // ConfigManager handles configuration persistence
@@ -59,7 +57,6 @@ func (cm *ConfigManager) Load() (*Config, error) {
 		if os.IsNotExist(err) {
 			// Return default configuration
 			return &Config{
-				RedirectURL: "http://localhost:8080/callback",
 				Scopes: []string{
 					"https://graph.microsoft.com/.default",
 				},
@@ -74,9 +71,6 @@ func (cm *ConfigManager) Load() (*Config, error) {
 	}
 
 	// Set defaults if not specified
-	if config.RedirectURL == "" {
-		config.RedirectURL = "http://localhost:8080/callback"
-	}
 	if len(config.Scopes) == 0 {
 		config.Scopes = []string{"https://graph.microsoft.com/.default"}
 	}
