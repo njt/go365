@@ -5,6 +5,7 @@
 *.so
 *.dylib
 /go365
+examples/**/go365-*
 
 # Test binary, built with `go test -c`
 *.test
