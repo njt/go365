@@ -61,20 +61,65 @@ type SendMailRequest struct {
 type MessageList struct {
 	Value    []*Message `json:"value"`
 	NextLink string     `json:"@odata.nextLink,omitempty"`
+	Count    int        `json:"@odata.count,omitempty"`
 }
 
 // ListMessagesOptions represents options for listing messages
 type ListMessagesOptions struct {
 	FolderID  string
 	Top       int
+	Skip      int    // Offset-based pagination
+	PageToken string // Cursor-based pagination (extracted from previous response)
 	Filter    string
 	OrderBy   string
 	StartTime *time.Time
 	EndTime   *time.Time
 }
 
+// ListMessagesResponse represents the response from ListMessages with pagination info
+type ListMessagesResponse struct {
+	Messages      []*Message
+	Count         int
+	HasMore       bool
+	NextPageToken string
+}
+
+// ExtractPageToken extracts the pagination token from a Graph API nextLink URL.
+// It looks for $skiptoken or $skip parameter and returns it for use in subsequent requests.
+func ExtractPageToken(nextLink string) string {
+	if nextLink == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(nextLink)
+	if err != nil {
+		return ""
+	}
+
+	// Try $skiptoken first (preferred for cursor-based pagination)
+	if skiptoken := parsed.Query().Get("$skiptoken"); skiptoken != "" {
+		return skiptoken
+	}
+
+	// Fall back to $skip (offset-based pagination)
+	if skip := parsed.Query().Get("$skip"); skip != "" {
+		return skip
+	}
+
+	return ""
+}
+
 // ListMessages retrieves messages from the user's mailbox
 func (c *Client) ListMessages(ctx context.Context, opts *ListMessagesOptions) ([]*Message, error) {
+	resp, err := c.ListMessagesWithPagination(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Messages, nil
+}
+
+// ListMessagesWithPagination retrieves messages with pagination information
+func (c *Client) ListMessagesWithPagination(ctx context.Context, opts *ListMessagesOptions) (*ListMessagesResponse, error) {
 	path := "/me/messages"
 	if opts != nil && opts.FolderID != "" {
 		path = fmt.Sprintf("/me/mailFolders/%s/messages", opts.FolderID)
@@ -83,10 +128,25 @@ func (c *Client) ListMessages(ctx context.Context, opts *ListMessagesOptions) ([
 	// Build query parameters
 	params := url.Values{}
 	params.Set("$top", fmt.Sprintf("%d", DefaultMessageLimit))
-	
+	params.Set("$count", "true") // Request count for pagination info
+
 	if opts != nil {
 		if opts.Top > 0 {
 			params.Set("$top", fmt.Sprintf("%d", opts.Top))
+		}
+
+		// Handle pagination: PageToken takes precedence over Skip
+		if opts.PageToken != "" {
+			// Check if it's a skiptoken (contains non-numeric characters) or a skip value
+			if _, err := fmt.Sscanf(opts.PageToken, "%d", new(int)); err == nil {
+				// It's a numeric skip value
+				params.Set("$skip", opts.PageToken)
+			} else {
+				// It's a skiptoken
+				params.Set("$skiptoken", opts.PageToken)
+			}
+		} else if opts.Skip > 0 {
+			params.Set("$skip", fmt.Sprintf("%d", opts.Skip))
 		}
 
 		filters := []string{}
@@ -123,7 +183,14 @@ func (c *Client) ListMessages(ctx context.Context, opts *ListMessagesOptions) ([
 		return nil, fmt.Errorf("failed to unmarshal messages: %w", err)
 	}
 
-	return messageList.Value, nil
+	nextPageToken := ExtractPageToken(messageList.NextLink)
+
+	return &ListMessagesResponse{
+		Messages:      messageList.Value,
+		Count:         len(messageList.Value),
+		HasMore:       messageList.NextLink != "",
+		NextPageToken: nextPageToken,
+	}, nil
 }
 
 // GetMessage retrieves a specific message by ID

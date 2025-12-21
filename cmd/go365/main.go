@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/njt/go365/internal/output"
 	"github.com/njt/go365/internal/plugin"
 	"github.com/njt/go365/libgo365"
 	"github.com/spf13/cobra"
@@ -292,24 +293,36 @@ var mailListCmd = &cobra.Command{
 		// Get options from flags
 		folderID, _ := cmd.Flags().GetString("folder-id")
 		top, _ := cmd.Flags().GetInt("top")
+		skip, _ := cmd.Flags().GetInt("skip")
+		pageToken, _ := cmd.Flags().GetString("page-token")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		// --markdown is accepted but is a no-op for list (no body content)
 
 		opts := &libgo365.ListMessagesOptions{
-			FolderID: folderID,
-			Top:      top,
+			FolderID:  folderID,
+			Top:       top,
+			Skip:      skip,
+			PageToken: pageToken,
 		}
 
-		messages, err := client.ListMessages(ctx, opts)
+		resp, err := client.ListMessagesWithPagination(ctx, opts)
 		if err != nil {
 			return fmt.Errorf("failed to list messages: %w", err)
 		}
 
-		if len(messages) == 0 {
+		if jsonOutput {
+			// JSON output matching Graph API structure
+			listResp := output.FormatListResponse(resp.Messages, resp.Count, resp.NextPageToken)
+			return output.WriteJSON(os.Stdout, listResp)
+		}
+
+		// Human-readable output
+		if len(resp.Messages) == 0 {
 			fmt.Println("No messages found")
 			return nil
 		}
 
-		// Display messages
-		for _, msg := range messages {
+		for _, msg := range resp.Messages {
 			fmt.Printf("ID: %s\n", msg.ID)
 			fmt.Printf("Subject: %s\n", msg.Subject)
 			if msg.From != nil && msg.From.EmailAddress != nil {
@@ -320,6 +333,9 @@ var mailListCmd = &cobra.Command{
 			}
 			fmt.Println("---")
 		}
+
+		// Print pagination hint if there are more results
+		output.PrintNextPageHint(os.Stdout, resp.NextPageToken)
 
 		return nil
 	},
@@ -366,7 +382,21 @@ var mailGetCmd = &cobra.Command{
 			return fmt.Errorf("failed to get message: %w", err)
 		}
 
-		// Display message details
+		// Get output format flags
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		markdownOutput, _ := cmd.Flags().GetBool("markdown")
+
+		// Convert body to markdown if requested and body is HTML
+		if markdownOutput && message.Body != nil && strings.EqualFold(message.Body.ContentType, "HTML") {
+			message.Body.Content = output.HTMLToMarkdown(message.Body.Content)
+			message.Body.ContentType = "Markdown"
+		}
+
+		if jsonOutput {
+			return output.WriteJSON(os.Stdout, message)
+		}
+
+		// Human-readable output
 		fmt.Printf("ID: %s\n", message.ID)
 		fmt.Printf("Subject: %s\n", message.Subject)
 		if message.From != nil && message.From.EmailAddress != nil {
@@ -484,6 +514,13 @@ var mailSendCmd = &cobra.Command{
 			return fmt.Errorf("failed to send message: %w", err)
 		}
 
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		// --markdown is accepted but is a no-op for send
+
+		if jsonOutput {
+			return output.WriteJSON(os.Stdout, output.FormatActionResponse(true, "Message sent successfully"))
+		}
+
 		fmt.Println("Message sent successfully!")
 		return nil
 	},
@@ -493,6 +530,14 @@ func init() {
 	// mail list flags
 	mailListCmd.Flags().String("folder-id", "", "Folder ID (e.g., inbox, sentitems)")
 	mailListCmd.Flags().Int("top", 0, "Number of messages to retrieve (default: 100)")
+	mailListCmd.Flags().Int("skip", 0, "Skip first N messages (offset-based pagination)")
+	mailListCmd.Flags().String("page-token", "", "Continue from previous response (cursor-based pagination)")
+	mailListCmd.Flags().Bool("json", false, "Output as JSON")
+	mailListCmd.Flags().Bool("markdown", false, "Convert HTML body to Markdown (no-op for list)")
+
+	// mail get flags
+	mailGetCmd.Flags().Bool("json", false, "Output as JSON")
+	mailGetCmd.Flags().Bool("markdown", false, "Convert HTML body to Markdown")
 
 	// mail send flags
 	mailSendCmd.Flags().String("subject", "", "Email subject (required)")
@@ -502,6 +547,8 @@ func init() {
 	mailSendCmd.Flags().String("cc", "", "CC recipient email address(es), comma-separated")
 	mailSendCmd.Flags().String("bcc", "", "BCC recipient email address(es), comma-separated")
 	mailSendCmd.Flags().Bool("save-to-sent-items", true, "Save message to sent items")
+	mailSendCmd.Flags().Bool("json", false, "Output as JSON")
+	mailSendCmd.Flags().Bool("markdown", false, "No-op for send command (accepted for consistency)")
 
 	mailCmd.AddCommand(mailListCmd)
 	mailCmd.AddCommand(mailGetCmd)
