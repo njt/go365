@@ -29,3 +29,6 @@ go.work
 # OS files
 .DS_Store
 Thumbs.db
+
+# Git worktrees
+.worktrees/
