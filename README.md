@@ -68,6 +68,42 @@ go365 status
 - `go365 config show` - Display current configuration
 - `go365 plugins` - List available plugins in PATH
 
+### Mail Commands
+
+- `go365 mail list` - List email messages from your mailbox
+  - `--folder-id` - Specify folder (e.g., inbox, sentitems)
+  - `--top` - Number of messages to retrieve (default: 100)
+- `go365 mail get <message-id>` - Get a specific email message by ID
+- `go365 mail send` - Send an email message
+  - `--subject` - Email subject (required)
+  - `--to` - Recipient email address(es), comma-separated (required)
+  - `--body` - Email body content (required)
+  - `--body-type` - Body content type: Text or HTML (default: Text)
+  - `--cc` - CC recipient email address(es), comma-separated
+  - `--bcc` - BCC recipient email address(es), comma-separated
+  - `--save-to-sent-items` - Save message to sent items (default: true)
+
+**Example:**
+
+```bash
+# List recent emails
+go365 mail list --top 20
+
+# Get a specific email
+go365 mail get AAMkAGI2THVSAAA=
+
+# Send an email
+go365 mail send --subject "Hello" --to "user@example.com" --body "Hello from go365!"
+
+# Send HTML email with CC
+go365 mail send \
+  --subject "Important Update" \
+  --to "user@example.com" \
+  --cc "manager@example.com" \
+  --body "<h1>Hello</h1><p>This is an HTML email</p>" \
+  --body-type HTML
+```
+
 ### Plugin System
 
 go365 supports a Git-style plugin system. If you run a command that isn't built-in, go365 will look for an executable named `go365-COMMAND` in your PATH.

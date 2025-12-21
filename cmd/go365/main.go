@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/njt/go365/internal/plugin"
 	"github.com/njt/go365/libgo365"
@@ -42,6 +43,7 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(pluginsCmd)
+	rootCmd.AddCommand(mailCmd)
 }
 
 var loginCmd = &cobra.Command{
@@ -246,6 +248,264 @@ func init() {
 
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configShowCmd)
+}
+
+var mailCmd = &cobra.Command{
+	Use:   "mail",
+	Short: "Manage email messages",
+	Long:  `Read and send email messages as the authenticated user`,
+}
+
+var mailListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List email messages",
+	Long:  `List email messages from the authenticated user's mailbox`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+
+		// Get options from flags
+		folderID, _ := cmd.Flags().GetString("folder-id")
+		top, _ := cmd.Flags().GetInt("top")
+
+		opts := &libgo365.ListMessagesOptions{
+			FolderID: folderID,
+			Top:      top,
+		}
+
+		messages, err := client.ListMessages(ctx, opts)
+		if err != nil {
+			return fmt.Errorf("failed to list messages: %w", err)
+		}
+
+		if len(messages) == 0 {
+			fmt.Println("No messages found")
+			return nil
+		}
+
+		// Display messages
+		for _, msg := range messages {
+			fmt.Printf("ID: %s\n", msg.ID)
+			fmt.Printf("Subject: %s\n", msg.Subject)
+			if msg.From != nil && msg.From.EmailAddress != nil {
+				fmt.Printf("From: %s <%s>\n", msg.From.EmailAddress.Name, msg.From.EmailAddress.Address)
+			}
+			if msg.ReceivedDateTime != nil {
+				fmt.Printf("Received: %s\n", msg.ReceivedDateTime.Format(time.RFC3339))
+			}
+			fmt.Println("---")
+		}
+
+		return nil
+	},
+}
+
+var mailGetCmd = &cobra.Command{
+	Use:   "get <message-id>",
+	Short: "Get a specific email message",
+	Long:  `Retrieve and display a specific email message by ID`,
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		messageID := args[0]
+
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+
+		message, err := client.GetMessage(ctx, messageID)
+		if err != nil {
+			return fmt.Errorf("failed to get message: %w", err)
+		}
+
+		// Display message details
+		fmt.Printf("ID: %s\n", message.ID)
+		fmt.Printf("Subject: %s\n", message.Subject)
+		if message.From != nil && message.From.EmailAddress != nil {
+			fmt.Printf("From: %s <%s>\n", message.From.EmailAddress.Name, message.From.EmailAddress.Address)
+		}
+		if len(message.ToRecipients) > 0 {
+			fmt.Printf("To: ")
+			for i, recipient := range message.ToRecipients {
+				if i > 0 {
+					fmt.Printf(", ")
+				}
+				if recipient.EmailAddress != nil {
+					fmt.Printf("%s <%s>", recipient.EmailAddress.Name, recipient.EmailAddress.Address)
+				}
+			}
+			fmt.Println()
+		}
+		if message.ReceivedDateTime != nil {
+			fmt.Printf("Received: %s\n", message.ReceivedDateTime.Format(time.RFC3339))
+		}
+		if message.Body != nil {
+			fmt.Printf("\nBody (%s):\n", message.Body.ContentType)
+			fmt.Println(message.Body.Content)
+		}
+
+		return nil
+	},
+}
+
+var mailSendCmd = &cobra.Command{
+	Use:   "send",
+	Short: "Send an email message",
+	Long:  `Send an email message as the authenticated user`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+
+		// Get required flags
+		subject, _ := cmd.Flags().GetString("subject")
+		to, _ := cmd.Flags().GetString("to")
+		body, _ := cmd.Flags().GetString("body")
+		bodyType, _ := cmd.Flags().GetString("body-type")
+		cc, _ := cmd.Flags().GetString("cc")
+		bcc, _ := cmd.Flags().GetString("bcc")
+		saveToSentItems, _ := cmd.Flags().GetBool("save-to-sent-items")
+
+		if subject == "" {
+			return fmt.Errorf("subject is required")
+		}
+		if to == "" {
+			return fmt.Errorf("to is required")
+		}
+		if body == "" {
+			return fmt.Errorf("body is required")
+		}
+
+		// Parse recipients
+		parseRecipients := func(addresses string) []*libgo365.Recipient {
+			if addresses == "" {
+				return nil
+			}
+			addrs := strings.Split(addresses, ",")
+			recipients := make([]*libgo365.Recipient, 0, len(addrs))
+			for _, addr := range addrs {
+				addr = strings.TrimSpace(addr)
+				if addr != "" {
+					recipients = append(recipients, &libgo365.Recipient{
+						EmailAddress: &libgo365.EmailAddress{
+							Address: addr,
+						},
+					})
+				}
+			}
+			return recipients
+		}
+
+		message := &libgo365.Message{
+			Subject: subject,
+			Body: &libgo365.ItemBody{
+				ContentType: bodyType,
+				Content:     body,
+			},
+			ToRecipients:  parseRecipients(to),
+			CcRecipients:  parseRecipients(cc),
+			BccRecipients: parseRecipients(bcc),
+		}
+
+		err = client.SendMail(ctx, message, saveToSentItems)
+		if err != nil {
+			return fmt.Errorf("failed to send message: %w", err)
+		}
+
+		fmt.Println("Message sent successfully!")
+		return nil
+	},
+}
+
+func init() {
+	// mail list flags
+	mailListCmd.Flags().String("folder-id", "", "Folder ID (e.g., inbox, sentitems)")
+	mailListCmd.Flags().Int("top", 0, "Number of messages to retrieve (default: 100)")
+
+	// mail send flags
+	mailSendCmd.Flags().String("subject", "", "Email subject (required)")
+	mailSendCmd.Flags().String("to", "", "Recipient email address(es), comma-separated (required)")
+	mailSendCmd.Flags().String("body", "", "Email body content (required)")
+	mailSendCmd.Flags().String("body-type", "Text", "Body content type (Text or HTML)")
+	mailSendCmd.Flags().String("cc", "", "CC recipient email address(es), comma-separated")
+	mailSendCmd.Flags().String("bcc", "", "BCC recipient email address(es), comma-separated")
+	mailSendCmd.Flags().Bool("save-to-sent-items", true, "Save message to sent items")
+
+	mailCmd.AddCommand(mailListCmd)
+	mailCmd.AddCommand(mailGetCmd)
+	mailCmd.AddCommand(mailSendCmd)
 }
 
 func main() {
