@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-
-	"golang.org/x/oauth2"
 )
 
 const (
@@ -18,16 +16,23 @@ const (
 
 // Client is a Microsoft Graph API client
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
+	httpClient  *http.Client
+	baseURL     string
+	accessToken string
 }
 
 // NewClient creates a new Microsoft Graph client
-func NewClient(ctx context.Context, token *oauth2.Token, config *oauth2.Config) *Client {
+func NewClient(ctx context.Context, accessToken string) *Client {
 	return &Client{
-		httpClient: config.Client(ctx, token),
-		baseURL:    GraphAPIBaseURL,
+		httpClient:  &http.Client{},
+		baseURL:     GraphAPIBaseURL,
+		accessToken: accessToken,
 	}
+}
+
+// addAuthHeader adds the authorization header to a request
+func (c *Client) addAuthHeader(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+c.accessToken)
 }
 
 // Get performs a GET request to the Microsoft Graph API
@@ -38,6 +43,8 @@ func (c *Client) Get(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+
+	c.addAuthHeader(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -76,6 +83,8 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
+	c.addAuthHeader(req)
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
@@ -107,6 +116,8 @@ func (c *Client) doJSONRequest(ctx context.Context, method, path string, data in
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+
+	c.addAuthHeader(req)
 
 	if data != nil {
 		req.Header.Set("Content-Type", "application/json")

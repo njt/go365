@@ -47,7 +47,7 @@ func init() {
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate with Microsoft 365",
-	Long:  `Authenticate with Microsoft 365 using OAuth 2.0`,
+	Long:  `Authenticate with Microsoft 365 using device code flow`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		config, err := configMgr.Load()
 		if err != nil {
@@ -59,11 +59,9 @@ var loginCmd = &cobra.Command{
 		}
 
 		authConfig := libgo365.AuthConfig{
-			TenantID:     config.TenantID,
-			ClientID:     config.ClientID,
-			ClientSecret: config.ClientSecret,
-			RedirectURL:  config.RedirectURL,
-			Scopes:       config.Scopes,
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
 		}
 
 		auth, err := libgo365.NewAuthenticator(authConfig)
@@ -71,21 +69,8 @@ var loginCmd = &cobra.Command{
 			return fmt.Errorf("failed to create authenticator: %w", err)
 		}
 
-		// Generate auth URL
-		authURL := auth.GetAuthURL("state")
-		fmt.Println("Please visit the following URL to authenticate:")
-		fmt.Println(authURL)
-		fmt.Println()
-		fmt.Print("Enter the authorization code: ")
-
-		var code string
-		if _, err := fmt.Scanln(&code); err != nil {
-			return fmt.Errorf("failed to read code: %w", err)
-		}
-
 		ctx := context.Background()
-		_, err = auth.ExchangeCode(ctx, code)
-		if err != nil {
+		if err := auth.LoginWithDeviceCode(ctx); err != nil {
 			return fmt.Errorf("authentication failed: %w", err)
 		}
 
@@ -105,11 +90,9 @@ var logoutCmd = &cobra.Command{
 		}
 
 		authConfig := libgo365.AuthConfig{
-			TenantID:     config.TenantID,
-			ClientID:     config.ClientID,
-			ClientSecret: config.ClientSecret,
-			RedirectURL:  config.RedirectURL,
-			Scopes:       config.Scopes,
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
 		}
 
 		auth, err := libgo365.NewAuthenticator(authConfig)
@@ -117,7 +100,8 @@ var logoutCmd = &cobra.Command{
 			return fmt.Errorf("failed to create authenticator: %w", err)
 		}
 
-		if err := auth.Logout(); err != nil {
+		ctx := context.Background()
+		if err := auth.Logout(ctx); err != nil {
 			return fmt.Errorf("logout failed: %w", err)
 		}
 
@@ -137,11 +121,9 @@ var statusCmd = &cobra.Command{
 		}
 
 		authConfig := libgo365.AuthConfig{
-			TenantID:     config.TenantID,
-			ClientID:     config.ClientID,
-			ClientSecret: config.ClientSecret,
-			RedirectURL:  config.RedirectURL,
-			Scopes:       config.Scopes,
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
 		}
 
 		auth, err := libgo365.NewAuthenticator(authConfig)
@@ -157,13 +139,13 @@ var statusCmd = &cobra.Command{
 
 		fmt.Println("Status: Authenticated")
 
-		// Try to get user info
-		token, err := auth.GetToken(ctx)
+		// Try to get user info from Graph API
+		accessToken, err := auth.GetAccessToken(ctx)
 		if err != nil {
 			return err
 		}
 
-		client := libgo365.NewClient(ctx, token, auth.GetConfig())
+		client := libgo365.NewClient(ctx, accessToken)
 		userInfo, err := client.GetMe(ctx)
 		if err != nil {
 			fmt.Printf("Warning: Could not retrieve user info: %v\n", err)
@@ -199,16 +181,12 @@ var configSetCmd = &cobra.Command{
 
 		tenantID, _ := cmd.Flags().GetString("tenant-id")
 		clientID, _ := cmd.Flags().GetString("client-id")
-		clientSecret, _ := cmd.Flags().GetString("client-secret")
 
 		if tenantID != "" {
 			config.TenantID = tenantID
 		}
 		if clientID != "" {
 			config.ClientID = clientID
-		}
-		if clientSecret != "" {
-			config.ClientSecret = clientSecret
 		}
 
 		if err := configMgr.Save(config); err != nil {
@@ -232,12 +210,6 @@ var configShowCmd = &cobra.Command{
 
 		fmt.Printf("Tenant ID: %s\n", config.TenantID)
 		fmt.Printf("Client ID: %s\n", config.ClientID)
-		if config.ClientSecret != "" {
-			fmt.Printf("Client Secret: [configured]\n")
-		} else {
-			fmt.Printf("Client Secret: [not configured]\n")
-		}
-		fmt.Printf("Redirect URL: %s\n", config.RedirectURL)
 		fmt.Printf("Scopes: %v\n", config.Scopes)
 
 		return nil
@@ -271,7 +243,6 @@ var pluginsCmd = &cobra.Command{
 func init() {
 	configSetCmd.Flags().String("tenant-id", "", "Azure AD tenant ID")
 	configSetCmd.Flags().String("client-id", "", "Azure AD client ID")
-	configSetCmd.Flags().String("client-secret", "", "Azure AD client secret")
 
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configShowCmd)
