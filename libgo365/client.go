@@ -1,6 +1,7 @@
 package libgo365
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -99,8 +100,7 @@ func (c *Client) doJSONRequest(ctx context.Context, method, path string, data in
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal data: %w", err)
 		}
-		body = io.NopCloser(io.Reader(nil))
-		_ = jsonData // placeholder for actual implementation
+		body = bytes.NewReader(jsonData)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, body)

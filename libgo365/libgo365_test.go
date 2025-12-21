@@ -3,6 +3,7 @@ package libgo365
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/oauth2"
@@ -157,20 +158,7 @@ func TestNewAuthenticator(t *testing.T) {
 	}
 
 	// Verify the URL contains expected parameters
-	if !contains(authURL, "client_id=test-client") {
+	if !strings.Contains(authURL, "client_id=test-client") {
 		t.Error("Auth URL should contain client_id")
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || containsMiddle(s, substr)))
-}
-
-func containsMiddle(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
