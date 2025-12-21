@@ -4,7 +4,7 @@
 *.dll
 *.so
 *.dylib
-go365
+/go365
 
 # Test binary, built with `go test -c`
 *.test
