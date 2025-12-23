@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/njt/go365/internal/dateparse"
 	"github.com/njt/go365/internal/output"
 	"github.com/njt/go365/internal/plugin"
 	"github.com/njt/go365/libgo365"
@@ -45,6 +46,7 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(pluginsCmd)
 	rootCmd.AddCommand(mailCmd)
+	rootCmd.AddCommand(calendarCmd)
 }
 
 var loginCmd = &cobra.Command{
@@ -553,6 +555,269 @@ func init() {
 	mailCmd.AddCommand(mailListCmd)
 	mailCmd.AddCommand(mailGetCmd)
 	mailCmd.AddCommand(mailSendCmd)
+}
+
+var calendarCmd = &cobra.Command{
+	Use:   "calendar",
+	Short: "Manage calendar events",
+	Long:  `View and manage calendar events for the authenticated user`,
+}
+
+var calendarListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List calendar events",
+	Long:  `List calendar events for a time range. Defaults to today. Accepts natural language dates.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+
+		// Get options from flags
+		startStr, _ := cmd.Flags().GetString("start")
+		endStr, _ := cmd.Flags().GetString("end")
+		days, _ := cmd.Flags().GetInt("days")
+		calendarID, _ := cmd.Flags().GetString("calendar-id")
+		allCalendars, _ := cmd.Flags().GetBool("all-calendars")
+		top, _ := cmd.Flags().GetInt("top")
+		pageToken, _ := cmd.Flags().GetString("page-token")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		// --markdown is accepted but is a no-op for list (no body content)
+
+		// Parse start date (default: today)
+		now := time.Now()
+		var startTime time.Time
+		if startStr == "" {
+			startTime = dateparse.StartOfDay(now)
+		} else {
+			startTime, err = dateparse.Parse(startStr, now)
+			if err != nil {
+				return fmt.Errorf("invalid start date: %w", err)
+			}
+		}
+
+		// Parse end date
+		var endTime time.Time
+		if days > 0 {
+			// --days takes precedence
+			endTime = dateparse.AddDays(startTime, days)
+		} else if endStr != "" {
+			endTime, err = dateparse.Parse(endStr, now)
+			if err != nil {
+				return fmt.Errorf("invalid end date: %w", err)
+			}
+		} else {
+			// Default: 1 day from start
+			endTime = dateparse.AddDays(startTime, 1)
+		}
+
+		opts := &libgo365.CalendarViewOptions{
+			StartDateTime: dateparse.FormatISO8601(startTime),
+			EndDateTime:   dateparse.FormatISO8601(endTime),
+			CalendarID:    calendarID,
+			AllCalendars:  allCalendars,
+			Top:           top,
+			PageToken:     pageToken,
+		}
+
+		resp, err := client.CalendarView(ctx, opts)
+		if err != nil {
+			return fmt.Errorf("failed to list events: %w", err)
+		}
+
+		if jsonOutput {
+			// JSON output matching Graph API structure
+			listResp := output.FormatListResponse(resp.Events, resp.Count, resp.NextPageToken)
+			return output.WriteJSON(os.Stdout, listResp)
+		}
+
+		// Human-readable output
+		if len(resp.Events) == 0 {
+			fmt.Println("No events found")
+			return nil
+		}
+
+		for _, event := range resp.Events {
+			fmt.Printf("ID: %s\n", event.ID)
+			fmt.Printf("Subject: %s\n", event.Subject)
+			if event.Start != nil {
+				fmt.Printf("Start: %s\n", event.Start.DateTime)
+			}
+			if event.End != nil {
+				fmt.Printf("End: %s\n", event.End.DateTime)
+			}
+			if event.IsAllDay {
+				fmt.Printf("AllDay: true\n")
+			}
+			if event.Location != nil && event.Location.DisplayName != "" {
+				fmt.Printf("Location: %s\n", event.Location.DisplayName)
+			}
+			if event.Organizer != nil && event.Organizer.EmailAddress != nil {
+				fmt.Printf("Organizer: %s <%s>\n", event.Organizer.EmailAddress.Name, event.Organizer.EmailAddress.Address)
+			}
+			if event.ResponseStatus != nil && event.ResponseStatus.Response != "" {
+				fmt.Printf("Response: %s\n", event.ResponseStatus.Response)
+			}
+			if event.CalendarID != "" {
+				fmt.Printf("Calendar: %s\n", event.CalendarID)
+			}
+			fmt.Println("---")
+		}
+
+		// Print pagination hint if there are more results
+		output.PrintNextPageHint(os.Stdout, resp.NextPageToken)
+
+		return nil
+	},
+}
+
+var calendarGetCmd = &cobra.Command{
+	Use:   "get <event-id>",
+	Short: "Get a specific calendar event",
+	Long:  `Retrieve and display a specific calendar event by ID`,
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		eventID := args[0]
+
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+
+		calendarID, _ := cmd.Flags().GetString("calendar-id")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		markdownOutput, _ := cmd.Flags().GetBool("markdown")
+
+		event, err := client.GetEvent(ctx, eventID, calendarID)
+		if err != nil {
+			return fmt.Errorf("failed to get event: %w", err)
+		}
+
+		// Convert body to markdown if requested and body is HTML
+		if markdownOutput && event.Body != nil && strings.EqualFold(event.Body.ContentType, "HTML") {
+			event.Body.Content = output.HTMLToMarkdown(event.Body.Content)
+			event.Body.ContentType = "Markdown"
+		}
+
+		if jsonOutput {
+			return output.WriteJSON(os.Stdout, event)
+		}
+
+		// Human-readable output
+		fmt.Printf("ID: %s\n", event.ID)
+		fmt.Printf("Subject: %s\n", event.Subject)
+		if event.Start != nil {
+			fmt.Printf("Start: %s (%s)\n", event.Start.DateTime, event.Start.TimeZone)
+		}
+		if event.End != nil {
+			fmt.Printf("End: %s (%s)\n", event.End.DateTime, event.End.TimeZone)
+		}
+		if event.IsAllDay {
+			fmt.Printf("AllDay: true\n")
+		}
+		if event.Location != nil && event.Location.DisplayName != "" {
+			fmt.Printf("Location: %s\n", event.Location.DisplayName)
+		}
+		if event.Organizer != nil && event.Organizer.EmailAddress != nil {
+			fmt.Printf("Organizer: %s <%s>\n", event.Organizer.EmailAddress.Name, event.Organizer.EmailAddress.Address)
+		}
+		if event.ResponseStatus != nil && event.ResponseStatus.Response != "" {
+			fmt.Printf("Response: %s\n", event.ResponseStatus.Response)
+		}
+
+		// Attendees
+		if len(event.Attendees) > 0 {
+			fmt.Println("\nAttendees:")
+			for _, att := range event.Attendees {
+				if att.EmailAddress != nil {
+					status := ""
+					if att.Status != nil {
+						status = att.Status.Response
+					}
+					fmt.Printf("  - %s <%s> [%s] (%s)\n", att.EmailAddress.Name, att.EmailAddress.Address, att.Type, status)
+				}
+			}
+		}
+
+		// Online meeting
+		if event.OnlineMeeting != nil && event.OnlineMeeting.JoinUrl != "" {
+			fmt.Printf("\nOnline Meeting: %s\n", event.OnlineMeeting.JoinUrl)
+		}
+
+		// Body
+		if event.Body != nil && event.Body.Content != "" {
+			fmt.Printf("\nBody (%s):\n%s\n", event.Body.ContentType, event.Body.Content)
+		}
+
+		return nil
+	},
+}
+
+func init() {
+	// calendar list flags
+	calendarListCmd.Flags().String("start", "", "Start date/time (default: today, accepts natural language)")
+	calendarListCmd.Flags().String("end", "", "End date/time (default: start + 1 day)")
+	calendarListCmd.Flags().Int("days", 0, "Number of days from start (overrides --end)")
+	calendarListCmd.Flags().String("calendar-id", "", "Query specific calendar (default: primary)")
+	calendarListCmd.Flags().Bool("all-calendars", false, "Query all user's calendars")
+	calendarListCmd.Flags().Int("top", 0, "Limit number of results")
+	calendarListCmd.Flags().String("page-token", "", "Pagination token from previous response")
+	calendarListCmd.Flags().Bool("json", false, "Output as JSON")
+	calendarListCmd.Flags().Bool("markdown", false, "Convert HTML body to Markdown (no-op for list)")
+
+	// calendar get flags
+	calendarGetCmd.Flags().String("calendar-id", "", "Calendar containing the event (default: primary)")
+	calendarGetCmd.Flags().Bool("json", false, "Output as JSON")
+	calendarGetCmd.Flags().Bool("markdown", false, "Convert HTML body to Markdown")
+
+	calendarCmd.AddCommand(calendarListCmd)
+	calendarCmd.AddCommand(calendarGetCmd)
 }
 
 func main() {

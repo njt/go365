@@ -25,12 +25,14 @@ go test ./internal/output/...
 **go365** is a Microsoft 365 / Microsoft Graph CLI tool ported from Node.js m365 to Go.
 
 ```
-cmd/go365/main.go     - CLI entry point, all subcommands (login, logout, status, config, mail, plugins)
+cmd/go365/main.go     - CLI entry point, all subcommands (login, logout, status, config, mail, calendar, plugins)
 libgo365/             - Reusable library for embedding in other Go projects
   auth.go             - OAuth 2.0 via MSAL, device code flow, token caching (~/.go365/msal_cache.bin)
   client.go           - Graph API HTTP client (GET/POST/PUT/DELETE)
   config.go           - Config management (~/.go365/config.json)
   mail.go             - Email operations (list, get, send) with pagination support
+  calendar.go         - Calendar operations (list events, get event) with natural language dates
+internal/dateparse/   - Natural language date parsing (uses tj/go-naturaldate)
 internal/output/      - Agent-friendly output formatting (JSON, Markdown conversion)
 internal/plugin/      - Git-style plugin system: "go365 foo" looks for "go365-foo" in PATH
 examples/whoami/      - Example plugin demonstrating libgo365 usage
@@ -77,10 +79,26 @@ All list/get commands support these flags for agent consumption:
 
 ## CLI Structure
 
-Uses spf13/cobra. Each subcommand (login, logout, status, config, mail, plugins) defined in main.go. Unknown commands trigger plugin lookup.
+Uses spf13/cobra. Each subcommand (login, logout, status, config, mail, calendar, plugins) defined in main.go. Unknown commands trigger plugin lookup.
+
+## Calendar Command
+
+`calendar list` accepts natural language dates via [tj/go-naturaldate](https://github.com/tj/go-naturaldate):
+- `today`, `tomorrow`, `yesterday`
+- `next week`, `last month`, `next Tuesday`
+- `in 3 days`, `5 days ago`
+- ISO 8601: `2025-01-15` or `2025-01-15T09:00:00`
+
+```bash
+go365 calendar list                              # Today
+go365 calendar list --days 7                     # Next 7 days
+go365 calendar list --start "next monday" --end "friday"
+go365 calendar list --all-calendars --json       # All calendars, JSON output
+```
 
 ## Dependencies
 
 - `github.com/AzureAD/microsoft-authentication-library-for-go` - MSAL for OAuth
 - `github.com/spf13/cobra` - CLI framework
 - `github.com/JohannesKaufmann/html-to-markdown/v2` - HTML to Markdown conversion
+- `github.com/tj/go-naturaldate` - Natural language date parsing
