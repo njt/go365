@@ -6,6 +6,7 @@ require (
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0
 	github.com/spf13/cobra v1.10.2
+	github.com/tj/go-naturaldate v1.3.0
 )
 
 require (
