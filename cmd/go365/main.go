@@ -799,6 +799,69 @@ var calendarGetCmd = &cobra.Command{
 	},
 }
 
+var calendarCalendarsCmd = &cobra.Command{
+	Use:   "calendars",
+	Short: "List available calendars",
+	Long:  `List all calendars available to the authenticated user`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+
+		calendars, err := client.ListCalendars(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to list calendars: %w", err)
+		}
+
+		if jsonOutput {
+			listResp := output.FormatListResponse(calendars, len(calendars), "")
+			return output.WriteJSON(os.Stdout, listResp)
+		}
+
+		if len(calendars) == 0 {
+			fmt.Println("No calendars found")
+			return nil
+		}
+
+		fmt.Println("Calendars:\n")
+		for i, cal := range calendars {
+			fmt.Printf("%d. %s\n", i+1, cal.Name)
+			fmt.Printf("   ID: %s\n", cal.ID)
+			if cal.Owner != nil {
+				fmt.Printf("   Owner: %s\n", cal.Owner.Address)
+			}
+			fmt.Println()
+		}
+
+		return nil
+	},
+}
+
 func init() {
 	// calendar list flags
 	calendarListCmd.Flags().String("start", "", "Start date/time (default: today, accepts natural language)")
@@ -818,6 +881,11 @@ func init() {
 
 	calendarCmd.AddCommand(calendarListCmd)
 	calendarCmd.AddCommand(calendarGetCmd)
+
+	// calendar calendars flags
+	calendarCalendarsCmd.Flags().Bool("json", false, "Output as JSON")
+	calendarCalendarsCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op)")
+	calendarCmd.AddCommand(calendarCalendarsCmd)
 }
 
 func main() {
