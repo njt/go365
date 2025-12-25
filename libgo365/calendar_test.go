@@ -330,6 +330,46 @@ func TestGetEventEmptyID(t *testing.T) {
 	}
 }
 
+func TestListEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("Expected GET request, got %s", r.Method)
+		}
+
+		expectedPath := "/me/events"
+		if r.URL.Path != expectedPath {
+			t.Errorf("Expected path %s, got %s", expectedPath, r.URL.Path)
+		}
+
+		response := EventList{
+			Value: []*Event{
+				{ID: "event1", Subject: "Recurring Series Master"},
+				{ID: "event2", Subject: "Single Event"},
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  &http.Client{},
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	resp, err := client.ListEvents(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+
+	if len(resp.Events) != 2 {
+		t.Errorf("Expected 2 events, got %d", len(resp.Events))
+	}
+}
+
 func TestListCalendars(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/me/calendars" {

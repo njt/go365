@@ -78,6 +78,22 @@ type CalendarViewResponse struct {
 	NextPageToken string
 }
 
+// ListEventsOptions represents options for listing raw events
+type ListEventsOptions struct {
+	CalendarID string
+	Top        int
+	PageToken  string
+	Filter     string // OData filter expression
+}
+
+// ListEventsResponse represents the response from ListEvents with pagination
+type ListEventsResponse struct {
+	Events        []*Event
+	Count         int
+	HasMore       bool
+	NextPageToken string
+}
+
 // EventList represents a list of events returned by Graph API
 type EventList struct {
 	Value    []*Event `json:"value"`
@@ -200,6 +216,51 @@ func (c *Client) ListCalendars(ctx context.Context) ([]*Calendar, error) {
 	}
 
 	return calendarList.Value, nil
+}
+
+// ListEvents retrieves raw events (including series masters for recurring)
+func (c *Client) ListEvents(ctx context.Context, opts *ListEventsOptions) (*ListEventsResponse, error) {
+	path := "/me/events"
+	if opts != nil && opts.CalendarID != "" {
+		path = fmt.Sprintf("/me/calendars/%s/events", opts.CalendarID)
+	}
+
+	params := url.Values{}
+	if opts != nil {
+		if opts.Top > 0 {
+			params.Set("$top", fmt.Sprintf("%d", opts.Top))
+		}
+		if opts.PageToken != "" {
+			params.Set("$skip", opts.PageToken)
+		}
+		if opts.Filter != "" {
+			params.Set("$filter", opts.Filter)
+		}
+	}
+
+	fullPath := path
+	if len(params) > 0 {
+		fullPath = path + "?" + params.Encode()
+	}
+
+	data, err := c.Get(ctx, fullPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var eventList EventList
+	if err := json.Unmarshal(data, &eventList); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal events: %w", err)
+	}
+
+	nextPageToken := ExtractPageToken(eventList.NextLink)
+
+	return &ListEventsResponse{
+		Events:        eventList.Value,
+		Count:         len(eventList.Value),
+		HasMore:       eventList.NextLink != "",
+		NextPageToken: nextPageToken,
+	}, nil
 }
 
 // GetEvent retrieves a specific event by ID
