@@ -848,7 +848,7 @@ var calendarCalendarsCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Println("Calendars:\n")
+		fmt.Println("Calendars:")
 		for i, cal := range calendars {
 			fmt.Printf("%d. %s\n", i+1, cal.Name)
 			fmt.Printf("   ID: %s\n", cal.ID)
@@ -858,6 +858,82 @@ var calendarCalendarsCmd = &cobra.Command{
 			fmt.Println()
 		}
 
+		return nil
+	},
+}
+
+var calendarEventsCmd = &cobra.Command{
+	Use:   "events",
+	Short: "List raw calendar events",
+	Long:  `List raw events including series masters for recurring events. Unlike 'list', this doesn't expand recurring events into occurrences.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+
+		calendarID, _ := cmd.Flags().GetString("calendar-id")
+		top, _ := cmd.Flags().GetInt("top")
+		pageToken, _ := cmd.Flags().GetString("page-token")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+
+		opts := &libgo365.ListEventsOptions{
+			CalendarID: calendarID,
+			Top:        top,
+			PageToken:  pageToken,
+		}
+
+		resp, err := client.ListEvents(ctx, opts)
+		if err != nil {
+			return fmt.Errorf("failed to list events: %w", err)
+		}
+
+		if jsonOutput {
+			listResp := output.FormatListResponse(resp.Events, resp.Count, resp.NextPageToken)
+			return output.WriteJSON(os.Stdout, listResp)
+		}
+
+		if len(resp.Events) == 0 {
+			fmt.Println("No events found")
+			return nil
+		}
+
+		for _, event := range resp.Events {
+			fmt.Printf("ID: %s\n", event.ID)
+			fmt.Printf("Subject: %s\n", event.Subject)
+			if event.Start != nil {
+				fmt.Printf("Start: %s\n", event.Start.DateTime)
+			}
+			if event.End != nil {
+				fmt.Printf("End: %s\n", event.End.DateTime)
+			}
+			fmt.Println("---")
+		}
+
+		output.PrintNextPageHint(os.Stdout, resp.NextPageToken)
 		return nil
 	},
 }
@@ -886,6 +962,14 @@ func init() {
 	calendarCalendarsCmd.Flags().Bool("json", false, "Output as JSON")
 	calendarCalendarsCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op)")
 	calendarCmd.AddCommand(calendarCalendarsCmd)
+
+	// calendar events flags
+	calendarEventsCmd.Flags().String("calendar-id", "", "Query specific calendar")
+	calendarEventsCmd.Flags().Int("top", 0, "Limit number of results")
+	calendarEventsCmd.Flags().String("page-token", "", "Pagination token")
+	calendarEventsCmd.Flags().Bool("json", false, "Output as JSON")
+	calendarEventsCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op for list)")
+	calendarCmd.AddCommand(calendarEventsCmd)
 }
 
 func main() {
