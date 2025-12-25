@@ -330,6 +330,62 @@ func TestGetEventEmptyID(t *testing.T) {
 	}
 }
 
+func TestCreateEvent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+
+		if r.URL.Path != "/me/events" {
+			t.Errorf("Expected path /me/events, got %s", r.URL.Path)
+		}
+
+		var event Event
+		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+			t.Fatalf("Failed to decode request body: %v", err)
+		}
+
+		if event.Subject != "Test Meeting" {
+			t.Errorf("Expected subject 'Test Meeting', got '%s'", event.Subject)
+		}
+
+		// Return created event with ID
+		event.ID = "created-event-123"
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(event)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  &http.Client{},
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	event := &Event{
+		Subject: "Test Meeting",
+		Start: &DateTimeTimeZone{
+			DateTime: "2025-01-20T10:00:00",
+			TimeZone: "Pacific/Auckland",
+		},
+		End: &DateTimeTimeZone{
+			DateTime: "2025-01-20T10:30:00",
+			TimeZone: "Pacific/Auckland",
+		},
+	}
+
+	created, err := client.CreateEvent(ctx, event, "")
+	if err != nil {
+		t.Fatalf("CreateEvent failed: %v", err)
+	}
+
+	if created.ID != "created-event-123" {
+		t.Errorf("Expected ID 'created-event-123', got '%s'", created.ID)
+	}
+}
+
 func TestListEvents(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {

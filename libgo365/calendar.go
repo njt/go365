@@ -9,19 +9,20 @@ import (
 
 // Event represents a calendar event from Microsoft Graph
 type Event struct {
-	ID             string             `json:"id,omitempty"`
-	Subject        string             `json:"subject,omitempty"`
-	Start          *DateTimeTimeZone  `json:"start,omitempty"`
-	End            *DateTimeTimeZone  `json:"end,omitempty"`
-	IsAllDay       bool               `json:"isAllDay,omitempty"`
-	Location       *Location          `json:"location,omitempty"`
-	Organizer      *Recipient         `json:"organizer,omitempty"`
-	Attendees      []*Attendee        `json:"attendees,omitempty"`
-	ResponseStatus *ResponseStatus    `json:"responseStatus,omitempty"`
-	Body           *ItemBody          `json:"body,omitempty"`
-	OnlineMeeting  *OnlineMeetingInfo `json:"onlineMeeting,omitempty"`
-	WebLink        string             `json:"webLink,omitempty"`
-	CalendarID     string             `json:"calendarId,omitempty"` // Populated when using AllCalendars
+	ID              string             `json:"id,omitempty"`
+	Subject         string             `json:"subject,omitempty"`
+	Start           *DateTimeTimeZone  `json:"start,omitempty"`
+	End             *DateTimeTimeZone  `json:"end,omitempty"`
+	IsAllDay        bool               `json:"isAllDay,omitempty"`
+	Location        *Location          `json:"location,omitempty"`
+	Organizer       *Recipient         `json:"organizer,omitempty"`
+	Attendees       []*Attendee        `json:"attendees,omitempty"`
+	ResponseStatus  *ResponseStatus    `json:"responseStatus,omitempty"`
+	Body            *ItemBody          `json:"body,omitempty"`
+	OnlineMeeting   *OnlineMeetingInfo `json:"onlineMeeting,omitempty"`
+	IsOnlineMeeting bool               `json:"isOnlineMeeting,omitempty"`
+	WebLink         string             `json:"webLink,omitempty"`
+	CalendarID      string             `json:"calendarId,omitempty"` // Populated when using AllCalendars
 }
 
 // DateTimeTimeZone represents a date/time with timezone from Graph API
@@ -216,6 +217,33 @@ func (c *Client) ListCalendars(ctx context.Context) ([]*Calendar, error) {
 	}
 
 	return calendarList.Value, nil
+}
+
+// CreateEvent creates a new calendar event
+func (c *Client) CreateEvent(ctx context.Context, event *Event, calendarID string) (*Event, error) {
+	if event == nil {
+		return nil, fmt.Errorf("event is required")
+	}
+	if event.Subject == "" {
+		return nil, fmt.Errorf("event subject is required")
+	}
+
+	path := "/me/events"
+	if calendarID != "" {
+		path = fmt.Sprintf("/me/calendars/%s/events", calendarID)
+	}
+
+	data, err := c.Post(ctx, path, event)
+	if err != nil {
+		return nil, err
+	}
+
+	var created Event
+	if err := json.Unmarshal(data, &created); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal created event: %w", err)
+	}
+
+	return &created, nil
 }
 
 // ListEvents retrieves raw events (including series masters for recurring)
