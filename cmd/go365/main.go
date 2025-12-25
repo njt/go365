@@ -938,6 +938,153 @@ var calendarEventsCmd = &cobra.Command{
 	},
 }
 
+var calendarCreateCmd = &cobra.Command{
+	Use:   "create <subject>",
+	Short: "Create a calendar event",
+	Long:  `Create a new calendar event with subject, time, and optional attendees.`,
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		subject := args[0]
+
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+
+		// Parse flags
+		startStr, _ := cmd.Flags().GetString("start")
+		endStr, _ := cmd.Flags().GetString("end")
+		durationStr, _ := cmd.Flags().GetString("duration")
+		attendeesStr, _ := cmd.Flags().GetString("attendees")
+		location, _ := cmd.Flags().GetString("location")
+		body, _ := cmd.Flags().GetString("body")
+		online, _ := cmd.Flags().GetBool("online")
+		allDay, _ := cmd.Flags().GetBool("all-day")
+		calendarID, _ := cmd.Flags().GetString("calendar-id")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+
+		if startStr == "" {
+			return fmt.Errorf("--start is required")
+		}
+
+		if endStr != "" && durationStr != "" {
+			return fmt.Errorf("--end and --duration are mutually exclusive")
+		}
+
+		now := time.Now()
+		startTime, err := dateparse.Parse(startStr, now)
+		if err != nil {
+			return fmt.Errorf("invalid start time: %w", err)
+		}
+
+		var endTime time.Time
+		if endStr != "" {
+			endTime, err = dateparse.Parse(endStr, now)
+			if err != nil {
+				return fmt.Errorf("invalid end time: %w", err)
+			}
+		} else if durationStr != "" {
+			duration, err := dateparse.ParseDuration(durationStr)
+			if err != nil {
+				return fmt.Errorf("invalid duration: %w", err)
+			}
+			endTime = startTime.Add(duration)
+		} else {
+			// Default: 30 minutes
+			endTime = startTime.Add(30 * time.Minute)
+		}
+
+		tz := startTime.Location().String()
+		if tz == "Local" {
+			tz = "UTC"
+		}
+
+		event := &libgo365.Event{
+			Subject:         subject,
+			IsAllDay:        allDay,
+			IsOnlineMeeting: online,
+			Start: &libgo365.DateTimeTimeZone{
+				DateTime: startTime.Format("2006-01-02T15:04:05"),
+				TimeZone: tz,
+			},
+			End: &libgo365.DateTimeTimeZone{
+				DateTime: endTime.Format("2006-01-02T15:04:05"),
+				TimeZone: tz,
+			},
+		}
+
+		if location != "" {
+			event.Location = &libgo365.Location{DisplayName: location}
+		}
+
+		if body != "" {
+			event.Body = &libgo365.ItemBody{
+				ContentType: "Text",
+				Content:     body,
+			}
+		}
+
+		if attendeesStr != "" {
+			emails := strings.Split(attendeesStr, ",")
+			for _, email := range emails {
+				email = strings.TrimSpace(email)
+				if email != "" {
+					event.Attendees = append(event.Attendees, &libgo365.Attendee{
+						EmailAddress: &libgo365.EmailAddress{Address: email},
+						Type:         "required",
+					})
+				}
+			}
+		}
+
+		created, err := client.CreateEvent(ctx, event, calendarID)
+		if err != nil {
+			return fmt.Errorf("failed to create event: %w", err)
+		}
+
+		if jsonOutput {
+			return output.WriteJSON(os.Stdout, created)
+		}
+
+		fmt.Printf("Created event: %s\n", created.Subject)
+		fmt.Printf("ID: %s\n", created.ID)
+		if created.Start != nil {
+			fmt.Printf("Start: %s\n", created.Start.DateTime)
+		}
+		if created.End != nil {
+			fmt.Printf("End: %s\n", created.End.DateTime)
+		}
+		if created.OnlineMeeting != nil && created.OnlineMeeting.JoinUrl != "" {
+			fmt.Printf("Teams Link: %s\n", created.OnlineMeeting.JoinUrl)
+		}
+
+		return nil
+	},
+}
+
 func init() {
 	// calendar list flags
 	calendarListCmd.Flags().String("start", "", "Start date/time (default: today, accepts natural language)")
@@ -970,6 +1117,20 @@ func init() {
 	calendarEventsCmd.Flags().Bool("json", false, "Output as JSON")
 	calendarEventsCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op for list)")
 	calendarCmd.AddCommand(calendarEventsCmd)
+
+	// calendar create flags
+	calendarCreateCmd.Flags().String("start", "", "Start date/time (required, accepts natural language)")
+	calendarCreateCmd.Flags().String("end", "", "End date/time")
+	calendarCreateCmd.Flags().String("duration", "", "Duration (e.g., 30m, 1h) - alternative to --end")
+	calendarCreateCmd.Flags().String("attendees", "", "Comma-separated email addresses")
+	calendarCreateCmd.Flags().String("location", "", "Location")
+	calendarCreateCmd.Flags().String("body", "", "Description/agenda")
+	calendarCreateCmd.Flags().Bool("online", false, "Generate Teams meeting link")
+	calendarCreateCmd.Flags().Bool("all-day", false, "All-day event")
+	calendarCreateCmd.Flags().String("calendar-id", "", "Target calendar")
+	calendarCreateCmd.Flags().Bool("json", false, "Output as JSON")
+	calendarCreateCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op)")
+	calendarCmd.AddCommand(calendarCreateCmd)
 }
 
 func main() {

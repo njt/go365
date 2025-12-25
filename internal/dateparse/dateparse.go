@@ -97,3 +97,8 @@ func AddDays(t time.Time, days int) time.Time {
 func FormatISO8601(t time.Time) string {
 	return t.Format(time.RFC3339)
 }
+
+// ParseDuration parses a duration string like "30m", "1h", "90m"
+func ParseDuration(s string) (time.Duration, error) {
+	return time.ParseDuration(s)
+}
