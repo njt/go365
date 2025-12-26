@@ -938,6 +938,102 @@ var calendarEventsCmd = &cobra.Command{
 	},
 }
 
+var calendarRespondCmd = &cobra.Command{
+	Use:   "respond <event-id> <accept|decline|tentative>",
+	Short: "Respond to a calendar invitation",
+	Long:  `Accept, decline, or tentatively accept a calendar invitation.`,
+	Args:  cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+
+		respondAll, _ := cmd.Flags().GetBool("all")
+		idsStr, _ := cmd.Flags().GetString("ids")
+		message, _ := cmd.Flags().GetString("message")
+
+		var eventIDs []string
+		var response string
+
+		if respondAll {
+			if len(args) < 1 {
+				return fmt.Errorf("response type required (accept, decline, or tentative)")
+			}
+			response = args[0]
+
+			// Get all pending events
+			opts := &libgo365.ListEventsOptions{
+				Filter: "responseStatus/response eq 'notResponded' or responseStatus/response eq 'none'",
+			}
+			resp, err := client.ListEvents(ctx, opts)
+			if err != nil {
+				return fmt.Errorf("failed to list pending events: %w", err)
+			}
+			for _, e := range resp.Events {
+				eventIDs = append(eventIDs, e.ID)
+			}
+		} else if idsStr != "" {
+			if len(args) < 1 {
+				return fmt.Errorf("response type required (accept, decline, or tentative)")
+			}
+			response = args[0]
+			parts := strings.Split(idsStr, ",")
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				if p != "" {
+					eventIDs = append(eventIDs, p)
+				}
+			}
+		} else {
+			if len(args) < 2 {
+				return fmt.Errorf("usage: calendar respond <event-id> <accept|decline|tentative>")
+			}
+			eventIDs = []string{args[0]}
+			response = args[1]
+		}
+
+		if len(eventIDs) == 0 {
+			fmt.Println("No events to respond to")
+			return nil
+		}
+
+		for _, eventID := range eventIDs {
+			err := client.RespondToEvent(ctx, eventID, response, message)
+			if err != nil {
+				fmt.Printf("Failed to respond to %s: %v\n", eventID, err)
+				continue
+			}
+			fmt.Printf("Responded '%s' to event %s\n", response, eventID)
+		}
+
+		return nil
+	},
+}
+
 var calendarPendingCmd = &cobra.Command{
 	Use:   "pending",
 	Short: "List pending invitations",
@@ -1429,6 +1525,12 @@ func init() {
 	calendarEventsCmd.Flags().Bool("json", false, "Output as JSON")
 	calendarEventsCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op for list)")
 	calendarCmd.AddCommand(calendarEventsCmd)
+
+	// calendar respond flags
+	calendarRespondCmd.Flags().String("message", "", "Optional response message")
+	calendarRespondCmd.Flags().Bool("all", false, "Respond to all pending invitations")
+	calendarRespondCmd.Flags().String("ids", "", "Comma-separated event IDs to respond to")
+	calendarCmd.AddCommand(calendarRespondCmd)
 
 	// calendar pending flags
 	calendarPendingCmd.Flags().Bool("json", false, "Output as JSON")
