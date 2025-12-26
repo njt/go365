@@ -141,6 +141,32 @@ type FindMeetingTimesResponse struct {
 	EmptySuggestionsReason string                   `json:"emptySuggestionsReason,omitempty"`
 }
 
+// ScheduleItem represents a busy/free time block
+type ScheduleItem struct {
+	Status  string            `json:"status"` // busy, tentative, oof, free
+	Start   *DateTimeTimeZone `json:"start"`
+	End     *DateTimeTimeZone `json:"end"`
+	Subject string            `json:"subject,omitempty"`
+}
+
+// ScheduleInfo represents schedule info for one user
+type ScheduleInfo struct {
+	ScheduleId       string          `json:"scheduleId"`
+	AvailabilityView string          `json:"availabilityView"`
+	ScheduleItems    []*ScheduleItem `json:"scheduleItems"`
+	Error            *ScheduleError  `json:"error,omitempty"`
+}
+
+// ScheduleError represents an error getting schedule
+type ScheduleError struct {
+	Message string `json:"message"`
+}
+
+// GetScheduleResponse represents the response from getSchedule
+type GetScheduleResponse struct {
+	Value []*ScheduleInfo `json:"value"`
+}
+
 // CalendarList represents a list of calendars returned by Graph API
 type CalendarList struct {
 	Value []*Calendar `json:"value"`
@@ -257,6 +283,42 @@ func (c *Client) ListCalendars(ctx context.Context) ([]*Calendar, error) {
 	}
 
 	return calendarList.Value, nil
+}
+
+// GetSchedule retrieves free/busy information for users
+func (c *Client) GetSchedule(ctx context.Context, emails []string, startDateTime, endDateTime string) (*GetScheduleResponse, error) {
+	if len(emails) == 0 {
+		return nil, fmt.Errorf("at least one email is required")
+	}
+	if startDateTime == "" || endDateTime == "" {
+		return nil, fmt.Errorf("start and end date/time are required")
+	}
+
+	type requestBody struct {
+		Schedules                []string         `json:"schedules"`
+		StartTime                DateTimeTimeZone `json:"startTime"`
+		EndTime                  DateTimeTimeZone `json:"endTime"`
+		AvailabilityViewInterval int              `json:"availabilityViewInterval,omitempty"`
+	}
+
+	body := requestBody{
+		Schedules:                emails,
+		StartTime:                DateTimeTimeZone{DateTime: startDateTime, TimeZone: "UTC"},
+		EndTime:                  DateTimeTimeZone{DateTime: endDateTime, TimeZone: "UTC"},
+		AvailabilityViewInterval: 30, // 30-minute slots
+	}
+
+	data, err := c.Post(ctx, "/me/calendar/getSchedule", body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp GetScheduleResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &resp, nil
 }
 
 // FindMeetingTimes finds available meeting times for attendees

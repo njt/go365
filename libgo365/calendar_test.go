@@ -330,6 +330,58 @@ func TestGetEventEmptyID(t *testing.T) {
 	}
 }
 
+func TestGetSchedule(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+
+		if r.URL.Path != "/me/calendar/getSchedule" {
+			t.Errorf("Expected path /me/calendar/getSchedule, got %s", r.URL.Path)
+		}
+
+		response := GetScheduleResponse{
+			Value: []*ScheduleInfo{
+				{
+					ScheduleId:       "bob@example.com",
+					AvailabilityView: "0020000000",
+					ScheduleItems: []*ScheduleItem{
+						{
+							Status: "busy",
+							Start:  &DateTimeTimeZone{DateTime: "2025-01-20T10:00:00"},
+							End:    &DateTimeTimeZone{DateTime: "2025-01-20T11:00:00"},
+						},
+					},
+				},
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  &http.Client{},
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	resp, err := client.GetSchedule(ctx, []string{"bob@example.com"}, "2025-01-20T00:00:00", "2025-01-21T00:00:00")
+	if err != nil {
+		t.Fatalf("GetSchedule failed: %v", err)
+	}
+
+	if len(resp.Value) != 1 {
+		t.Errorf("Expected 1 schedule, got %d", len(resp.Value))
+	}
+
+	if resp.Value[0].ScheduleId != "bob@example.com" {
+		t.Errorf("Expected scheduleId 'bob@example.com', got '%s'", resp.Value[0].ScheduleId)
+	}
+}
+
 func TestFindMeetingTimes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
