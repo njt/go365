@@ -155,3 +155,25 @@ func (c *Client) GetMe(ctx context.Context) (map[string]interface{}, error) {
 
 	return result, nil
 }
+
+// MailboxSettings represents user mailbox settings from Graph API
+type MailboxSettings struct {
+	TimeZone   string `json:"timeZone"`
+	DateFormat string `json:"dateFormat"`
+	TimeFormat string `json:"timeFormat"`
+}
+
+// GetMailboxSettings retrieves the current user's mailbox settings (including timezone)
+func (c *Client) GetMailboxSettings(ctx context.Context) (*MailboxSettings, error) {
+	data, err := c.Get(ctx, "/me/mailboxSettings")
+	if err != nil {
+		return nil, err
+	}
+
+	var settings MailboxSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal mailbox settings: %w", err)
+	}
+
+	return &settings, nil
+}

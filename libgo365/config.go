@@ -12,6 +12,7 @@ type Config struct {
 	TenantID string   `json:"tenant_id,omitempty"`
 	ClientID string   `json:"client_id,omitempty"`
 	Scopes   []string `json:"scopes,omitempty"`
+	TimeZone string   `json:"timezone,omitempty"` // IANA timezone (e.g., "Pacific/Auckland")
 }
 
 // ConfigManager handles configuration persistence

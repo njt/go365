@@ -177,7 +177,7 @@ var configCmd = &cobra.Command{
 var configSetCmd = &cobra.Command{
 	Use:   "set",
 	Short: "Set configuration values",
-	Long:  `Set configuration values like tenant ID, client ID, etc.`,
+	Long:  `Set configuration values like tenant ID, client ID, timezone, etc.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		config, err := configMgr.Load()
 		if err != nil {
@@ -186,12 +186,16 @@ var configSetCmd = &cobra.Command{
 
 		tenantID, _ := cmd.Flags().GetString("tenant-id")
 		clientID, _ := cmd.Flags().GetString("client-id")
+		timezone, _ := cmd.Flags().GetString("timezone")
 
 		if tenantID != "" {
 			config.TenantID = tenantID
 		}
 		if clientID != "" {
 			config.ClientID = clientID
+		}
+		if timezone != "" {
+			config.TimeZone = timezone
 		}
 
 		if err := configMgr.Save(config); err != nil {
@@ -216,6 +220,11 @@ var configShowCmd = &cobra.Command{
 		fmt.Printf("Tenant ID: %s\n", config.TenantID)
 		fmt.Printf("Client ID: %s\n", config.ClientID)
 		fmt.Printf("Scopes: %v\n", config.Scopes)
+		if config.TimeZone != "" {
+			fmt.Printf("Timezone: %s\n", config.TimeZone)
+		} else {
+			fmt.Printf("Timezone: (using mailbox settings)\n")
+		}
 
 		return nil
 	},
@@ -248,6 +257,7 @@ var pluginsCmd = &cobra.Command{
 func init() {
 	configSetCmd.Flags().String("tenant-id", "", "Azure AD tenant ID")
 	configSetCmd.Flags().String("client-id", "", "Azure AD client ID")
+	configSetCmd.Flags().String("timezone", "", "Default IANA timezone (e.g., Pacific/Auckland)")
 
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configShowCmd)
@@ -608,6 +618,14 @@ var calendarListCmd = &cobra.Command{
 		userID, _ := cmd.Flags().GetString("user")
 		// --markdown is accepted but is a no-op for list (no body content)
 
+		// Expand short name to full email if needed
+		if userID != "" {
+			userID, err = expandEmail(ctx, client, userID)
+			if err != nil {
+				return err
+			}
+		}
+
 		// Parse start date (default: today)
 		now := time.Now()
 		var startTime time.Time
@@ -662,14 +680,15 @@ var calendarListCmd = &cobra.Command{
 			return nil
 		}
 
+		displayTZ := getDisplayTimezone(config)
 		for _, event := range resp.Events {
 			fmt.Printf("ID: %s\n", event.ID)
 			fmt.Printf("Subject: %s\n", event.Subject)
 			if event.Start != nil {
-				fmt.Printf("Start: %s\n", event.Start.DateTime)
+				fmt.Printf("Start: %s\n", formatDateTime(event.Start, displayTZ))
 			}
 			if event.End != nil {
-				fmt.Printf("End: %s\n", event.End.DateTime)
+				fmt.Printf("End: %s\n", formatDateTime(event.End, displayTZ))
 			}
 			if event.IsAllDay {
 				fmt.Printf("AllDay: true\n")
@@ -737,6 +756,14 @@ var calendarGetCmd = &cobra.Command{
 		markdownOutput, _ := cmd.Flags().GetBool("markdown")
 		userID, _ := cmd.Flags().GetString("user")
 
+		// Expand short name to full email if needed
+		if userID != "" {
+			userID, err = expandEmail(ctx, client, userID)
+			if err != nil {
+				return err
+			}
+		}
+
 		event, err := client.GetEventWithOptions(ctx, &libgo365.GetEventOptions{
 			EventID:    eventID,
 			CalendarID: calendarID,
@@ -757,13 +784,14 @@ var calendarGetCmd = &cobra.Command{
 		}
 
 		// Human-readable output
+		displayTZ := getDisplayTimezone(config)
 		fmt.Printf("ID: %s\n", event.ID)
 		fmt.Printf("Subject: %s\n", event.Subject)
 		if event.Start != nil {
-			fmt.Printf("Start: %s (%s)\n", event.Start.DateTime, event.Start.TimeZone)
+			fmt.Printf("Start: %s\n", formatDateTime(event.Start, displayTZ))
 		}
 		if event.End != nil {
-			fmt.Printf("End: %s (%s)\n", event.End.DateTime, event.End.TimeZone)
+			fmt.Printf("End: %s\n", formatDateTime(event.End, displayTZ))
 		}
 		if event.IsAllDay {
 			fmt.Printf("AllDay: true\n")
@@ -928,14 +956,15 @@ var calendarEventsCmd = &cobra.Command{
 			return nil
 		}
 
+		displayTZ := getDisplayTimezone(config)
 		for _, event := range resp.Events {
 			fmt.Printf("ID: %s\n", event.ID)
 			fmt.Printf("Subject: %s\n", event.Subject)
 			if event.Start != nil {
-				fmt.Printf("Start: %s\n", event.Start.DateTime)
+				fmt.Printf("Start: %s\n", formatDateTime(event.Start, displayTZ))
 			}
 			if event.End != nil {
-				fmt.Printf("End: %s\n", event.End.DateTime)
+				fmt.Printf("End: %s\n", formatDateTime(event.End, displayTZ))
 			}
 			fmt.Println("---")
 		}
@@ -1074,10 +1103,18 @@ var calendarPendingCmd = &cobra.Command{
 
 		client := libgo365.NewClient(ctx, accessToken)
 		jsonOutput, _ := cmd.Flags().GetBool("json")
+		includePast, _ := cmd.Flags().GetBool("include-past")
 
-		// Filter for events where responseStatus is notResponded or none
+		// Filter for events where responseStatus is notResponded or none, excluding events we organized
+		filter := "(responseStatus/response eq 'notResponded' or responseStatus/response eq 'none') and isOrganizer eq false"
+		if !includePast {
+			// Only show future events by default
+			now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+			filter = fmt.Sprintf("(%s) and start/dateTime ge '%s'", filter, now)
+		}
 		opts := &libgo365.ListEventsOptions{
-			Filter: "responseStatus/response eq 'notResponded' or responseStatus/response eq 'none'",
+			Filter:  filter,
+			OrderBy: "start/dateTime",
 		}
 
 		resp, err := client.ListEvents(ctx, opts)
@@ -1097,11 +1134,12 @@ var calendarPendingCmd = &cobra.Command{
 
 		fmt.Printf("%d pending invitation(s):\n\n", len(resp.Events))
 
+		displayTZ := getDisplayTimezone(config)
 		for i, event := range resp.Events {
 			fmt.Printf("%d. %s\n", i+1, event.Subject)
 			fmt.Printf("   ID: %s\n", event.ID)
 			if event.Start != nil {
-				fmt.Printf("   When: %s\n", event.Start.DateTime)
+				fmt.Printf("   When: %s\n", formatDateTime(event.Start, displayTZ))
 			}
 			if event.Organizer != nil && event.Organizer.EmailAddress != nil {
 				fmt.Printf("   From: %s\n", event.Organizer.EmailAddress.Address)
@@ -1159,6 +1197,12 @@ var calendarFreeBusyCmd = &cobra.Command{
 			}
 		}
 
+		// Expand short names to full emails
+		emails, err = expandEmails(ctx, client, emails)
+		if err != nil {
+			return err
+		}
+
 		startStr, _ := cmd.Flags().GetString("start")
 		endStr, _ := cmd.Flags().GetString("end")
 		jsonOutput, _ := cmd.Flags().GetBool("json")
@@ -1193,6 +1237,7 @@ var calendarFreeBusyCmd = &cobra.Command{
 			return output.WriteJSON(os.Stdout, resp)
 		}
 
+		displayTZ := getDisplayTimezone(config)
 		for _, schedule := range resp.Value {
 			fmt.Printf("%s:\n", schedule.ScheduleId)
 			if schedule.Error != nil {
@@ -1204,14 +1249,8 @@ var calendarFreeBusyCmd = &cobra.Command{
 				continue
 			}
 			for _, item := range schedule.ScheduleItems {
-				startDT := ""
-				endDT := ""
-				if item.Start != nil {
-					startDT = item.Start.DateTime
-				}
-				if item.End != nil {
-					endDT = item.End.DateTime
-				}
+				startDT := formatDateTime(item.Start, displayTZ)
+				endDT := formatDateTime(item.End, displayTZ)
 				fmt.Printf("  %s: %s - %s\n", strings.ToUpper(item.Status[:1])+item.Status[1:], startDT, endDT)
 			}
 			fmt.Println()
@@ -1268,6 +1307,12 @@ var calendarFindTimeCmd = &cobra.Command{
 		attendees := strings.Split(attendeesStr, ",")
 		for i := range attendees {
 			attendees[i] = strings.TrimSpace(attendees[i])
+		}
+
+		// Expand short names to full emails
+		attendees, err = expandEmails(ctx, client, attendees)
+		if err != nil {
+			return err
 		}
 
 		// Parse duration (default 30m)
@@ -1332,12 +1377,13 @@ var calendarFindTimeCmd = &cobra.Command{
 
 		fmt.Printf("Found %d available slots for %dm meeting:\n\n", len(resp.Suggestions), duration)
 
+		displayTZ := getDisplayTimezone(config)
 		for i, suggestion := range resp.Suggestions {
 			slot := suggestion.MeetingTimeSlot
 			if slot == nil || slot.Start == nil {
 				continue
 			}
-			fmt.Printf("%d. %s - %s\n", i+1, slot.Start.DateTime, slot.End.DateTime)
+			fmt.Printf("%d. %s - %s\n", i+1, formatDateTime(slot.Start, displayTZ), formatDateTime(slot.End, displayTZ))
 			for _, avail := range suggestion.AttendeeAvailability {
 				if avail.Attendee != nil && avail.Attendee.EmailAddress != nil {
 					fmt.Printf("   %s: %s\n", avail.Attendee.EmailAddress.Address, avail.Availability)
@@ -1397,6 +1443,7 @@ var calendarCreateCmd = &cobra.Command{
 		allDay, _ := cmd.Flags().GetBool("all-day")
 		calendarID, _ := cmd.Flags().GetString("calendar-id")
 		jsonOutput, _ := cmd.Flags().GetBool("json")
+		tzFlag, _ := cmd.Flags().GetString("timezone")
 
 		if startStr == "" {
 			return fmt.Errorf("--start is required")
@@ -1404,6 +1451,12 @@ var calendarCreateCmd = &cobra.Command{
 
 		if endStr != "" && durationStr != "" {
 			return fmt.Errorf("--end and --duration are mutually exclusive")
+		}
+
+		// Resolve timezone: flag > config > mailbox settings
+		tz, err := resolveTimezone(ctx, client, tzFlag, config)
+		if err != nil {
+			return fmt.Errorf("failed to resolve timezone: %w", err)
 		}
 
 		now := time.Now()
@@ -1427,11 +1480,6 @@ var calendarCreateCmd = &cobra.Command{
 		} else {
 			// Default: 30 minutes
 			endTime = startTime.Add(30 * time.Minute)
-		}
-
-		tz := startTime.Location().String()
-		if tz == "Local" {
-			tz = "UTC"
 		}
 
 		event := &libgo365.Event{
@@ -1461,8 +1509,15 @@ var calendarCreateCmd = &cobra.Command{
 
 		if attendeesStr != "" {
 			emails := strings.Split(attendeesStr, ",")
+			for i := range emails {
+				emails[i] = strings.TrimSpace(emails[i])
+			}
+			// Expand short names to full emails
+			emails, err = expandEmails(ctx, client, emails)
+			if err != nil {
+				return err
+			}
 			for _, email := range emails {
-				email = strings.TrimSpace(email)
 				if email != "" {
 					event.Attendees = append(event.Attendees, &libgo365.Attendee{
 						EmailAddress: &libgo365.EmailAddress{Address: email},
@@ -1481,13 +1536,14 @@ var calendarCreateCmd = &cobra.Command{
 			return output.WriteJSON(os.Stdout, created)
 		}
 
+		displayTZ := getDisplayTimezone(config)
 		fmt.Printf("Created event: %s\n", created.Subject)
 		fmt.Printf("ID: %s\n", created.ID)
 		if created.Start != nil {
-			fmt.Printf("Start: %s\n", created.Start.DateTime)
+			fmt.Printf("Start: %s\n", formatDateTime(created.Start, displayTZ))
 		}
 		if created.End != nil {
-			fmt.Printf("End: %s\n", created.End.DateTime)
+			fmt.Printf("End: %s\n", formatDateTime(created.End, displayTZ))
 		}
 		if created.OnlineMeeting != nil && created.OnlineMeeting.JoinUrl != "" {
 			fmt.Printf("Teams Link: %s\n", created.OnlineMeeting.JoinUrl)
@@ -1541,6 +1597,7 @@ func init() {
 	// calendar pending flags
 	calendarPendingCmd.Flags().Bool("json", false, "Output as JSON")
 	calendarPendingCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op)")
+	calendarPendingCmd.Flags().Bool("include-past", false, "Include past events")
 	calendarCmd.AddCommand(calendarPendingCmd)
 
 	// calendar free-busy flags
@@ -1570,9 +1627,156 @@ func init() {
 	calendarCreateCmd.Flags().Bool("online", false, "Generate Teams meeting link")
 	calendarCreateCmd.Flags().Bool("all-day", false, "All-day event")
 	calendarCreateCmd.Flags().String("calendar-id", "", "Target calendar")
+	calendarCreateCmd.Flags().String("timezone", "", "IANA timezone (e.g., Pacific/Auckland) - defaults to mailbox setting")
 	calendarCreateCmd.Flags().Bool("json", false, "Output as JSON")
 	calendarCreateCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op)")
 	calendarCmd.AddCommand(calendarCreateCmd)
+}
+
+// getDisplayTimezone returns the timezone for displaying times.
+// Checks: GO365_TIMEZONE env, TZ env, config, then falls back to system local.
+func getDisplayTimezone(config *libgo365.Config) string {
+	if tz := os.Getenv("GO365_TIMEZONE"); tz != "" {
+		return tz
+	}
+	if tz := os.Getenv("TZ"); tz != "" {
+		return tz
+	}
+	if config != nil && config.TimeZone != "" {
+		return config.TimeZone
+	}
+	// Fall back to system local - try to get IANA name
+	return time.Local.String()
+}
+
+// formatDateTime formats a DateTimeTimeZone for display, converting to local time
+// and showing the original timezone if different.
+// Example: "Tue 21 Jan 2026 09:00 AEDT (12:00 Pacific/Auckland)"
+func formatDateTime(dt *libgo365.DateTimeTimeZone, localTZ string) string {
+	if dt == nil {
+		return ""
+	}
+
+	// Parse the datetime in its original timezone
+	origLoc, err := time.LoadLocation(dt.TimeZone)
+	if err != nil {
+		// Fall back to just showing what we have
+		return fmt.Sprintf("%s (%s)", dt.DateTime, dt.TimeZone)
+	}
+
+	// Parse the datetime string (Graph API format: 2025-12-27T16:00:00.0000000)
+	t, err := time.ParseInLocation("2006-01-02T15:04:05", dt.DateTime[:19], origLoc)
+	if err != nil {
+		// Try without truncation
+		t, err = time.ParseInLocation("2006-01-02T15:04:05.0000000", dt.DateTime, origLoc)
+		if err != nil {
+			return fmt.Sprintf("%s (%s)", dt.DateTime, dt.TimeZone)
+		}
+	}
+
+	// Load local timezone for conversion
+	localLoc, err := time.LoadLocation(localTZ)
+	if err != nil {
+		localLoc = time.Local
+	}
+
+	// Convert to local time
+	localTime := t.In(localLoc)
+
+	// Format local time
+	localStr := localTime.Format("Mon 2 Jan 2006 15:04 MST")
+
+	// If same timezone, just show local
+	if dt.TimeZone == localTZ || t.Equal(localTime) {
+		return localStr
+	}
+
+	// Show local time with original in parentheses
+	origStr := t.Format("15:04")
+	return fmt.Sprintf("%s (%s %s)", localStr, origStr, dt.TimeZone)
+}
+
+// expandEmail expands a short name (without @) to a full email using the current user's domain.
+// If the input already contains @, it's returned unchanged.
+func expandEmail(ctx context.Context, client *libgo365.Client, input string) (string, error) {
+	if strings.Contains(input, "@") {
+		return input, nil
+	}
+
+	me, err := client.GetMe(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get current user: %w", err)
+	}
+
+	// Try mail first, then userPrincipalName
+	var myEmail string
+	if mail, ok := me["mail"].(string); ok && mail != "" {
+		myEmail = mail
+	} else if upn, ok := me["userPrincipalName"].(string); ok && upn != "" {
+		myEmail = upn
+	} else {
+		return "", fmt.Errorf("could not determine current user's email")
+	}
+
+	parts := strings.Split(myEmail, "@")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid email format: %s", myEmail)
+	}
+
+	return input + "@" + parts[1], nil
+}
+
+// expandEmails expands multiple short names to full emails.
+func expandEmails(ctx context.Context, client *libgo365.Client, inputs []string) ([]string, error) {
+	result := make([]string, 0, len(inputs))
+	for _, input := range inputs {
+		expanded, err := expandEmail(ctx, client, input)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, expanded)
+	}
+	return result, nil
+}
+
+// resolveTimezone determines the timezone to use with this priority:
+// 1. Explicit flag value (if provided)
+// 2. GO365_TIMEZONE environment variable
+// 3. TZ environment variable (standard, works on Linux/Windows)
+// 4. Config file setting
+// 5. User's mailbox settings from Graph API
+func resolveTimezone(ctx context.Context, client *libgo365.Client, flagValue string, config *libgo365.Config) (string, error) {
+	// 1. Flag takes precedence
+	if flagValue != "" {
+		return flagValue, nil
+	}
+
+	// 2. GO365_TIMEZONE env var (tool-specific)
+	if tz := os.Getenv("GO365_TIMEZONE"); tz != "" {
+		return tz, nil
+	}
+
+	// 3. TZ env var (standard, cross-platform)
+	if tz := os.Getenv("TZ"); tz != "" {
+		return tz, nil
+	}
+
+	// 4. Config file setting
+	if config.TimeZone != "" {
+		return config.TimeZone, nil
+	}
+
+	// 5. Query mailbox settings
+	settings, err := client.GetMailboxSettings(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get mailbox settings: %w", err)
+	}
+
+	if settings.TimeZone == "" {
+		return "", fmt.Errorf("no timezone found in mailbox settings")
+	}
+
+	return settings.TimeZone, nil
 }
 
 func main() {

@@ -86,6 +86,7 @@ type ListEventsOptions struct {
 	Top        int
 	PageToken  string
 	Filter     string // OData filter expression
+	OrderBy    string // OData orderby expression (e.g., "start/dateTime")
 }
 
 // ListEventsResponse represents the response from ListEvents with pagination
@@ -484,6 +485,9 @@ func (c *Client) ListEvents(ctx context.Context, opts *ListEventsOptions) (*List
 		}
 		if opts.Filter != "" {
 			params.Set("$filter", opts.Filter)
+		}
+		if opts.OrderBy != "" {
+			params.Set("$orderby", opts.OrderBy)
 		}
 	}
 
