@@ -285,6 +285,41 @@ func (c *Client) ListCalendars(ctx context.Context) ([]*Calendar, error) {
 	return calendarList.Value, nil
 }
 
+// RespondToEvent responds to a calendar invitation (accept, decline, tentativelyAccept)
+func (c *Client) RespondToEvent(ctx context.Context, eventID, response, message string) error {
+	if eventID == "" {
+		return fmt.Errorf("event ID is required")
+	}
+
+	validResponses := map[string]string{
+		"accept":    "accept",
+		"decline":   "decline",
+		"tentative": "tentativelyAccept",
+	}
+
+	endpoint, ok := validResponses[response]
+	if !ok {
+		return fmt.Errorf("invalid response: %s (must be accept, decline, or tentative)", response)
+	}
+
+	path := fmt.Sprintf("/me/events/%s/%s", eventID, endpoint)
+
+	var body interface{}
+	if message != "" {
+		body = map[string]interface{}{
+			"comment":      message,
+			"sendResponse": true,
+		}
+	} else {
+		body = map[string]interface{}{
+			"sendResponse": true,
+		}
+	}
+
+	_, err := c.Post(ctx, path, body)
+	return err
+}
+
 // GetSchedule retrieves free/busy information for users
 func (c *Client) GetSchedule(ctx context.Context, emails []string, startDateTime, endDateTime string) (*GetScheduleResponse, error) {
 	if len(emails) == 0 {

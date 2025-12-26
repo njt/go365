@@ -330,6 +330,33 @@ func TestGetEventEmptyID(t *testing.T) {
 	}
 }
 
+func TestRespondToEvent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+
+		if r.URL.Path != "/me/events/event123/accept" {
+			t.Errorf("Expected path /me/events/event123/accept, got %s", r.URL.Path)
+		}
+
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  &http.Client{},
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	err := client.RespondToEvent(ctx, "event123", "accept", "")
+	if err != nil {
+		t.Fatalf("RespondToEvent failed: %v", err)
+	}
+}
+
 func TestGetSchedule(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
