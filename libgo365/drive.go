@@ -109,11 +109,41 @@ type ListItemsResponse struct {
 	NextPageToken string
 }
 
+// GetDriveOptions represents options for getting a drive
+type GetDriveOptions struct {
+	UserID  string // Access another user's drive
+	SiteID  string // Access SharePoint site drive
+	DriveID string // Access specific drive by ID
+}
+
+// GetDrive retrieves drive information
+func (c *Client) GetDrive(ctx context.Context, opts *GetDriveOptions) (*Drive, error) {
+	path := "/me/drive"
+	if opts != nil {
+		if opts.DriveID != "" {
+			path = fmt.Sprintf("/drives/%s", opts.DriveID)
+		} else if opts.UserID != "" {
+			path = fmt.Sprintf("/users/%s/drive", opts.UserID)
+		} else if opts.SiteID != "" {
+			path = fmt.Sprintf("/sites/%s/drive", opts.SiteID)
+		}
+	}
+
+	data, err := c.Get(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+
+	var drive Drive
+	if err := json.Unmarshal(data, &drive); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal drive: %w", err)
+	}
+
+	return &drive, nil
+}
+
 // Silence unused import warnings - will be used in later tasks
 var (
-	_ = context.Background
-	_ = json.Marshal
-	_ = fmt.Sprintf
 	_ = io.EOF
 	_ = url.Values{}
 	_ = strings.TrimSpace
