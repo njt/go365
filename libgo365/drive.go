@@ -175,7 +175,7 @@ func (c *Client) ListItems(ctx context.Context, pathOrID string, opts *ListItems
 		path = basePath + fmt.Sprintf("/items/%s/children", pathOrID)
 	} else {
 		// Path-based access: /drive/root:/path:/children
-		cleanPath := strings.TrimPrefix(pathOrID, "/")
+		cleanPath := strings.Trim(pathOrID, "/")
 		path = basePath + fmt.Sprintf("/root:/%s:/children", cleanPath)
 	}
 
@@ -241,7 +241,7 @@ func (c *Client) GetItem(ctx context.Context, pathOrID string, opts *GetItemOpti
 		path = basePath + fmt.Sprintf("/items/%s", pathOrID)
 	} else {
 		// Path-based access: /drive/root:/path:
-		cleanPath := strings.TrimPrefix(pathOrID, "/")
+		cleanPath := strings.Trim(pathOrID, "/")
 		path = basePath + fmt.Sprintf("/root:/%s:", cleanPath)
 	}
 
@@ -274,7 +274,7 @@ func (c *Client) DownloadItem(ctx context.Context, pathOrID string, w io.Writer,
 	if isItemID(pathOrID) {
 		path = basePath + fmt.Sprintf("/items/%s/content", pathOrID)
 	} else {
-		cleanPath := strings.TrimPrefix(pathOrID, "/")
+		cleanPath := strings.Trim(pathOrID, "/")
 		path = basePath + fmt.Sprintf("/root:/%s:/content", cleanPath)
 	}
 
