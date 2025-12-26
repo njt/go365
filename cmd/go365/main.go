@@ -1779,6 +1779,495 @@ func resolveTimezone(ctx context.Context, client *libgo365.Client, flagValue str
 	return settings.TimeZone, nil
 }
 
+// formatBytes formats bytes as human-readable string
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+var driveCmd = &cobra.Command{
+	Use:   "drive",
+	Short: "Manage OneDrive files",
+	Long:  `List, download, upload, and manage files in OneDrive.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Default: show drive info
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		userID, _ := cmd.Flags().GetString("user")
+
+		var driveOpts *libgo365.GetDriveOptions
+		if userID != "" {
+			expanded, err := expandEmail(ctx, client, userID)
+			if err != nil {
+				return err
+			}
+			driveOpts = &libgo365.GetDriveOptions{UserID: expanded}
+		}
+
+		drive, err := client.GetDrive(ctx, driveOpts)
+		if err != nil {
+			return fmt.Errorf("failed to get drive info: %w", err)
+		}
+
+		if jsonOutput {
+			return output.WriteJSON(os.Stdout, drive)
+		}
+
+		fmt.Printf("Drive: %s\n", drive.Name)
+		fmt.Printf("Type: %s\n", drive.DriveType)
+		if drive.Owner != nil && drive.Owner.User != nil {
+			fmt.Printf("Owner: %s\n", drive.Owner.User.DisplayName)
+		}
+		if drive.Quota != nil {
+			fmt.Printf("Quota: %s used of %s (%s remaining)\n",
+				formatBytes(drive.Quota.Used),
+				formatBytes(drive.Quota.Total),
+				formatBytes(drive.Quota.Remaining))
+			fmt.Printf("Status: %s\n", drive.Quota.State)
+		}
+
+		return nil
+	},
+}
+
+var driveLsCmd = &cobra.Command{
+	Use:   "ls [path]",
+	Short: "List folder contents",
+	Long:  `List files and folders. Defaults to root. Use / for root or /path/to/folder.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		userID, _ := cmd.Flags().GetString("user")
+
+		path := "/"
+		if len(args) > 0 {
+			path = args[0]
+		}
+
+		opts := &libgo365.ListItemsOptions{}
+		if userID != "" {
+			expanded, err := expandEmail(ctx, client, userID)
+			if err != nil {
+				return err
+			}
+			opts.UserID = expanded
+		}
+
+		resp, err := client.ListItems(ctx, path, opts)
+		if err != nil {
+			return fmt.Errorf("failed to list items: %w", err)
+		}
+
+		if jsonOutput {
+			listResp := output.FormatListResponse(resp.Items, resp.Count, resp.NextPageToken)
+			return output.WriteJSON(os.Stdout, listResp)
+		}
+
+		if len(resp.Items) == 0 {
+			fmt.Println("(empty)")
+			return nil
+		}
+
+		for _, item := range resp.Items {
+			mode := "-rw-"
+			name := item.Name
+			if item.IsFolder() {
+				mode = "drwx"
+				name += "/"
+			}
+			modified := ""
+			if item.LastModifiedDateTime != nil {
+				modified = item.LastModifiedDateTime.Format("2006-01-02")
+			}
+			size := "-"
+			if !item.IsFolder() {
+				size = formatBytes(item.Size)
+			}
+			fmt.Printf("%s  %-30s  %s  %8s  %s\n", mode, name, modified, size, item.ID)
+		}
+
+		return nil
+	},
+}
+
+var driveInfoCmd = &cobra.Command{
+	Use:   "info <path-or-id>",
+	Short: "Get item metadata",
+	Long:  `Display detailed metadata for a file or folder.`,
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		userID, _ := cmd.Flags().GetString("user")
+
+		var opts *libgo365.GetItemOptions
+		if userID != "" {
+			expanded, err := expandEmail(ctx, client, userID)
+			if err != nil {
+				return err
+			}
+			opts = &libgo365.GetItemOptions{UserID: expanded}
+		}
+
+		item, err := client.GetItem(ctx, args[0], opts)
+		if err != nil {
+			return fmt.Errorf("failed to get item: %w", err)
+		}
+
+		if jsonOutput {
+			return output.WriteJSON(os.Stdout, item)
+		}
+
+		fmt.Printf("ID: %s\n", item.ID)
+		fmt.Printf("Name: %s\n", item.Name)
+		if item.IsFolder() {
+			fmt.Printf("Type: folder\n")
+			if item.Folder != nil {
+				fmt.Printf("Children: %d\n", item.Folder.ChildCount)
+			}
+		} else {
+			fmt.Printf("Type: file\n")
+			fmt.Printf("Size: %s\n", formatBytes(item.Size))
+			if item.File != nil {
+				fmt.Printf("MIME: %s\n", item.File.MimeType)
+			}
+		}
+		if item.CreatedDateTime != nil {
+			fmt.Printf("Created: %s\n", item.CreatedDateTime.Format(time.RFC3339))
+		}
+		if item.LastModifiedDateTime != nil {
+			fmt.Printf("Modified: %s\n", item.LastModifiedDateTime.Format(time.RFC3339))
+		}
+		if item.ParentReference != nil && item.ParentReference.Path != "" {
+			fmt.Printf("Path: %s\n", item.ParentReference.Path)
+		}
+		fmt.Printf("URL: %s\n", item.WebURL)
+
+		return nil
+	},
+}
+
+var driveCatCmd = &cobra.Command{
+	Use:   "cat <path-or-id>",
+	Short: "Output file contents to stdout",
+	Long:  `Download and output file contents to stdout. Useful for piping.`,
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+		userID, _ := cmd.Flags().GetString("user")
+
+		var opts *libgo365.GetItemOptions
+		if userID != "" {
+			expanded, err := expandEmail(ctx, client, userID)
+			if err != nil {
+				return err
+			}
+			opts = &libgo365.GetItemOptions{UserID: expanded}
+		}
+
+		err = client.DownloadItem(ctx, args[0], os.Stdout, opts)
+		if err != nil {
+			return fmt.Errorf("failed to download: %w", err)
+		}
+
+		return nil
+	},
+}
+
+var driveGetCmd = &cobra.Command{
+	Use:   "get <path-or-id>",
+	Short: "Download file to local filesystem",
+	Long:  `Download a file to the current directory or specified output path.`,
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+		userID, _ := cmd.Flags().GetString("user")
+		outputPath, _ := cmd.Flags().GetString("output")
+
+		var opts *libgo365.GetItemOptions
+		if userID != "" {
+			expanded, err := expandEmail(ctx, client, userID)
+			if err != nil {
+				return err
+			}
+			opts = &libgo365.GetItemOptions{UserID: expanded}
+		}
+
+		// Get item info first to determine filename if not specified
+		item, err := client.GetItem(ctx, args[0], opts)
+		if err != nil {
+			return fmt.Errorf("failed to get item info: %w", err)
+		}
+
+		if item.IsFolder() {
+			return fmt.Errorf("cannot download a folder, use a file path")
+		}
+
+		if outputPath == "" {
+			outputPath = item.Name
+		}
+
+		file, err := os.Create(outputPath)
+		if err != nil {
+			return fmt.Errorf("failed to create file: %w", err)
+		}
+		defer file.Close()
+
+		err = client.DownloadItem(ctx, args[0], file, opts)
+		if err != nil {
+			os.Remove(outputPath) // Clean up partial file
+			return fmt.Errorf("failed to download: %w", err)
+		}
+
+		fmt.Printf("Downloaded: %s (%s)\n", outputPath, formatBytes(item.Size))
+		return nil
+	},
+}
+
+var driveFindCmd = &cobra.Command{
+	Use:   "find <query>",
+	Short: "Search for files",
+	Long:  `Search for files and folders matching a query.`,
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		userID, _ := cmd.Flags().GetString("user")
+
+		opts := &libgo365.ListItemsOptions{}
+		if userID != "" {
+			expanded, err := expandEmail(ctx, client, userID)
+			if err != nil {
+				return err
+			}
+			opts.UserID = expanded
+		}
+
+		resp, err := client.SearchItems(ctx, args[0], opts)
+		if err != nil {
+			return fmt.Errorf("failed to search: %w", err)
+		}
+
+		if jsonOutput {
+			listResp := output.FormatListResponse(resp.Items, resp.Count, resp.NextPageToken)
+			return output.WriteJSON(os.Stdout, listResp)
+		}
+
+		if len(resp.Items) == 0 {
+			fmt.Println("No results found")
+			return nil
+		}
+
+		fmt.Printf("Found %d result(s):\n\n", resp.Count)
+		for _, item := range resp.Items {
+			mode := "-rw-"
+			name := item.Name
+			if item.IsFolder() {
+				mode = "drwx"
+				name += "/"
+			}
+			path := ""
+			if item.ParentReference != nil {
+				path = item.ParentReference.Path
+			}
+			fmt.Printf("%s  %-30s  %s  %s\n", mode, name, item.ID, path)
+		}
+
+		return nil
+	},
+}
+
+func init() {
+	driveCmd.Flags().Bool("json", false, "Output as JSON")
+	driveCmd.Flags().String("user", "", "Access another user's OneDrive")
+	driveCmd.Flags().String("site", "", "Access SharePoint site drive")
+
+	driveLsCmd.Flags().Bool("json", false, "Output as JSON")
+	driveLsCmd.Flags().String("user", "", "Access another user's OneDrive")
+	driveCmd.AddCommand(driveLsCmd)
+
+	driveInfoCmd.Flags().Bool("json", false, "Output as JSON")
+	driveInfoCmd.Flags().String("user", "", "Access another user's OneDrive")
+	driveCmd.AddCommand(driveInfoCmd)
+
+	driveCatCmd.Flags().String("user", "", "Access another user's OneDrive")
+	driveCmd.AddCommand(driveCatCmd)
+
+	driveGetCmd.Flags().String("user", "", "Access another user's OneDrive")
+	driveGetCmd.Flags().StringP("output", "o", "", "Output file path (default: original filename)")
+	driveCmd.AddCommand(driveGetCmd)
+
+	driveFindCmd.Flags().Bool("json", false, "Output as JSON")
+	driveFindCmd.Flags().String("user", "", "Access another user's OneDrive")
+	driveCmd.AddCommand(driveFindCmd)
+
+	rootCmd.AddCommand(driveCmd)
+}
+
 func main() {
 	// Check if we should try to execute a plugin
 	if len(os.Args) > 1 {
