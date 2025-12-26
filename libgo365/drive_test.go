@@ -210,3 +210,37 @@ func TestDownloadItem(t *testing.T) {
 		t.Errorf("Expected content %q, got %q", fileContent, buf.Bytes())
 	}
 }
+
+func TestSearchItems(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expectedPath := "/me/drive/root/search(q='report')"
+		if r.URL.Path != expectedPath {
+			t.Errorf("Expected path %s, got %s", expectedPath, r.URL.Path)
+		}
+
+		items := DriveItemList{
+			Value: []*DriveItem{
+				{ID: "file1", Name: "report.pdf"},
+				{ID: "file2", Name: "report-2024.docx"},
+			},
+		}
+		json.NewEncoder(w).Encode(items)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  server.Client(),
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	resp, err := client.SearchItems(ctx, "report", nil)
+	if err != nil {
+		t.Fatalf("SearchItems failed: %v", err)
+	}
+
+	if len(resp.Items) != 2 {
+		t.Errorf("Expected 2 items, got %d", len(resp.Items))
+	}
+}

@@ -287,6 +287,48 @@ func (c *Client) DownloadItem(ctx context.Context, pathOrID string, w io.Writer,
 	return err
 }
 
+// SearchItems searches for items matching a query
+func (c *Client) SearchItems(ctx context.Context, query string, opts *ListItemsOptions) (*ListItemsResponse, error) {
+	basePath := c.buildDrivePath(opts)
+
+	// URL encode the query for the path
+	path := basePath + fmt.Sprintf("/root/search(q='%s')", url.PathEscape(query))
+
+	params := url.Values{}
+	if opts != nil {
+		if opts.Top > 0 {
+			params.Set("$top", fmt.Sprintf("%d", opts.Top))
+		}
+		if opts.PageToken != "" {
+			params.Set("$skiptoken", opts.PageToken)
+		}
+	}
+
+	fullPath := path
+	if len(params) > 0 {
+		fullPath = path + "?" + params.Encode()
+	}
+
+	data, err := c.Get(ctx, fullPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var itemList DriveItemList
+	if err := json.Unmarshal(data, &itemList); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal search results: %w", err)
+	}
+
+	nextPageToken := ExtractPageToken(itemList.NextLink)
+
+	return &ListItemsResponse{
+		Items:         itemList.Value,
+		Count:         len(itemList.Value),
+		HasMore:       itemList.NextLink != "",
+		NextPageToken: nextPageToken,
+	}, nil
+}
+
 // Silence unused import warnings - will be used in later tasks
 var (
 	_ = time.Now
