@@ -938,6 +938,114 @@ var calendarEventsCmd = &cobra.Command{
 	},
 }
 
+var calendarFreeBusyCmd = &cobra.Command{
+	Use:   "free-busy <emails>",
+	Short: "Check availability for users",
+	Long:  `Check free/busy status for one or more users. Works for anyone in your organization.`,
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+
+		// Parse emails from args (may be comma-separated or multiple args)
+		var emails []string
+		for _, arg := range args {
+			parts := strings.Split(arg, ",")
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				if p != "" {
+					emails = append(emails, p)
+				}
+			}
+		}
+
+		startStr, _ := cmd.Flags().GetString("start")
+		endStr, _ := cmd.Flags().GetString("end")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+
+		now := time.Now()
+		var startTime, endTime time.Time
+
+		if startStr == "" {
+			startTime = now
+		} else {
+			startTime, err = dateparse.Parse(startStr, now)
+			if err != nil {
+				return fmt.Errorf("invalid start time: %w", err)
+			}
+		}
+
+		if endStr == "" {
+			endTime = startTime.Add(24 * time.Hour)
+		} else {
+			endTime, err = dateparse.Parse(endStr, now)
+			if err != nil {
+				return fmt.Errorf("invalid end time: %w", err)
+			}
+		}
+
+		resp, err := client.GetSchedule(ctx, emails, dateparse.FormatISO8601(startTime), dateparse.FormatISO8601(endTime))
+		if err != nil {
+			return fmt.Errorf("failed to get schedule: %w", err)
+		}
+
+		if jsonOutput {
+			return output.WriteJSON(os.Stdout, resp)
+		}
+
+		for _, schedule := range resp.Value {
+			fmt.Printf("%s:\n", schedule.ScheduleId)
+			if schedule.Error != nil {
+				fmt.Printf("  Error: %s\n", schedule.Error.Message)
+				continue
+			}
+			if len(schedule.ScheduleItems) == 0 {
+				fmt.Println("  Free")
+				continue
+			}
+			for _, item := range schedule.ScheduleItems {
+				startDT := ""
+				endDT := ""
+				if item.Start != nil {
+					startDT = item.Start.DateTime
+				}
+				if item.End != nil {
+					endDT = item.End.DateTime
+				}
+				fmt.Printf("  %s: %s - %s\n", strings.ToUpper(item.Status[:1])+item.Status[1:], startDT, endDT)
+			}
+			fmt.Println()
+		}
+
+		return nil
+	},
+}
+
 var calendarFindTimeCmd = &cobra.Command{
 	Use:   "find-time",
 	Short: "Find available meeting times",
@@ -1246,6 +1354,13 @@ func init() {
 	calendarEventsCmd.Flags().Bool("json", false, "Output as JSON")
 	calendarEventsCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op for list)")
 	calendarCmd.AddCommand(calendarEventsCmd)
+
+	// calendar free-busy flags
+	calendarFreeBusyCmd.Flags().String("start", "", "Start date/time (default: now)")
+	calendarFreeBusyCmd.Flags().String("end", "", "End date/time (default: start + 1 day)")
+	calendarFreeBusyCmd.Flags().Bool("json", false, "Output as JSON")
+	calendarFreeBusyCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op)")
+	calendarCmd.AddCommand(calendarFreeBusyCmd)
 
 	// calendar find-time flags
 	calendarFindTimeCmd.Flags().String("attendees", "", "Comma-separated email addresses (required)")
