@@ -258,8 +258,36 @@ func (c *Client) GetItem(ctx context.Context, pathOrID string, opts *GetItemOpti
 	return &item, nil
 }
 
+// DownloadItem downloads a file's content to the provided writer
+func (c *Client) DownloadItem(ctx context.Context, pathOrID string, w io.Writer, opts *GetItemOptions) error {
+	var listOpts *ListItemsOptions
+	if opts != nil {
+		listOpts = &ListItemsOptions{
+			UserID:  opts.UserID,
+			SiteID:  opts.SiteID,
+			DriveID: opts.DriveID,
+		}
+	}
+	basePath := c.buildDrivePath(listOpts)
+
+	var path string
+	if isItemID(pathOrID) {
+		path = basePath + fmt.Sprintf("/items/%s/content", pathOrID)
+	} else {
+		cleanPath := strings.TrimPrefix(pathOrID, "/")
+		path = basePath + fmt.Sprintf("/root:/%s:/content", cleanPath)
+	}
+
+	data, err := c.Get(ctx, path)
+	if err != nil {
+		return err
+	}
+
+	_, err = w.Write(data)
+	return err
+}
+
 // Silence unused import warnings - will be used in later tasks
 var (
-	_ = io.EOF
 	_ = time.Now
 )

@@ -1,6 +1,7 @@
 package libgo365
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -177,5 +178,35 @@ func TestGetItemByID(t *testing.T) {
 
 	if item.ID != "ABC123" {
 		t.Errorf("Expected ID 'ABC123', got '%s'", item.ID)
+	}
+}
+
+func TestDownloadItem(t *testing.T) {
+	fileContent := []byte("Hello, World!")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expectedPath := "/me/drive/items/file123/content"
+		if r.URL.Path != expectedPath {
+			t.Errorf("Expected path %s, got %s", expectedPath, r.URL.Path)
+		}
+		w.Write(fileContent)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  server.Client(),
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	var buf bytes.Buffer
+	err := client.DownloadItem(ctx, "file123", &buf, nil)
+	if err != nil {
+		t.Fatalf("DownloadItem failed: %v", err)
+	}
+
+	if !bytes.Equal(buf.Bytes(), fileContent) {
+		t.Errorf("Expected content %q, got %q", fileContent, buf.Bytes())
 	}
 }
