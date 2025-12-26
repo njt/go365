@@ -142,10 +142,83 @@ func (c *Client) GetDrive(ctx context.Context, opts *GetDriveOptions) (*Drive, e
 	return &drive, nil
 }
 
+// buildDrivePath constructs the API path based on options
+func (c *Client) buildDrivePath(opts *ListItemsOptions) string {
+	if opts == nil {
+		return "/me/drive"
+	}
+	if opts.DriveID != "" {
+		return fmt.Sprintf("/drives/%s", opts.DriveID)
+	}
+	if opts.UserID != "" {
+		return fmt.Sprintf("/users/%s/drive", opts.UserID)
+	}
+	if opts.SiteID != "" {
+		return fmt.Sprintf("/sites/%s/drive", opts.SiteID)
+	}
+	return "/me/drive"
+}
+
+// isItemID returns true if the path looks like an item ID (no slash)
+func isItemID(pathOrID string) bool {
+	return !strings.Contains(pathOrID, "/")
+}
+
+// ListItems retrieves items in a folder
+func (c *Client) ListItems(ctx context.Context, pathOrID string, opts *ListItemsOptions) (*ListItemsResponse, error) {
+	basePath := c.buildDrivePath(opts)
+
+	var path string
+	if pathOrID == "/" || pathOrID == "" {
+		path = basePath + "/root/children"
+	} else if isItemID(pathOrID) {
+		path = basePath + fmt.Sprintf("/items/%s/children", pathOrID)
+	} else {
+		// Path-based access: /drive/root:/path:/children
+		cleanPath := strings.TrimPrefix(pathOrID, "/")
+		path = basePath + fmt.Sprintf("/root:/%s:/children", cleanPath)
+	}
+
+	params := url.Values{}
+	if opts != nil {
+		if opts.Top > 0 {
+			params.Set("$top", fmt.Sprintf("%d", opts.Top))
+		}
+		if opts.PageToken != "" {
+			params.Set("$skiptoken", opts.PageToken)
+		}
+		if opts.OrderBy != "" {
+			params.Set("$orderby", opts.OrderBy)
+		}
+	}
+
+	fullPath := path
+	if len(params) > 0 {
+		fullPath = path + "?" + params.Encode()
+	}
+
+	data, err := c.Get(ctx, fullPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var itemList DriveItemList
+	if err := json.Unmarshal(data, &itemList); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal items: %w", err)
+	}
+
+	nextPageToken := ExtractPageToken(itemList.NextLink)
+
+	return &ListItemsResponse{
+		Items:         itemList.Value,
+		Count:         len(itemList.Value),
+		HasMore:       itemList.NextLink != "",
+		NextPageToken: nextPageToken,
+	}, nil
+}
+
 // Silence unused import warnings - will be used in later tasks
 var (
 	_ = io.EOF
-	_ = url.Values{}
-	_ = strings.TrimSpace
 	_ = time.Now
 )

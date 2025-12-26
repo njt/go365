@@ -51,3 +51,68 @@ func TestGetDrive(t *testing.T) {
 		t.Errorf("Expected quota total 1099511627776, got %d", drive.Quota.Total)
 	}
 }
+
+func TestListItems(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expectedPath := "/me/drive/root/children"
+		if r.URL.Path != expectedPath {
+			t.Errorf("Expected path %s, got %s", expectedPath, r.URL.Path)
+		}
+
+		items := DriveItemList{
+			Value: []*DriveItem{
+				{ID: "folder1", Name: "Documents", Folder: &FolderFacet{ChildCount: 5}},
+				{ID: "file1", Name: "report.pdf", Size: 1024, File: &FileFacet{MimeType: "application/pdf"}},
+			},
+		}
+		json.NewEncoder(w).Encode(items)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  server.Client(),
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	resp, err := client.ListItems(ctx, "/", nil)
+	if err != nil {
+		t.Fatalf("ListItems failed: %v", err)
+	}
+
+	if len(resp.Items) != 2 {
+		t.Errorf("Expected 2 items, got %d", len(resp.Items))
+	}
+	if resp.Items[0].Name != "Documents" {
+		t.Errorf("Expected first item 'Documents', got '%s'", resp.Items[0].Name)
+	}
+	if !resp.Items[0].IsFolder() {
+		t.Error("Expected first item to be a folder")
+	}
+}
+
+func TestListItemsWithPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expectedPath := "/me/drive/root:/Documents:/children"
+		if r.URL.Path != expectedPath {
+			t.Errorf("Expected path %s, got %s", expectedPath, r.URL.Path)
+		}
+
+		items := DriveItemList{Value: []*DriveItem{}}
+		json.NewEncoder(w).Encode(items)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  server.Client(),
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	_, err := client.ListItems(ctx, "/Documents", nil)
+	if err != nil {
+		t.Fatalf("ListItems failed: %v", err)
+	}
+}
