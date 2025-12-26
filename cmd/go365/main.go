@@ -938,6 +938,81 @@ var calendarEventsCmd = &cobra.Command{
 	},
 }
 
+var calendarPendingCmd = &cobra.Command{
+	Use:   "pending",
+	Short: "List pending invitations",
+	Long:  `List calendar invitations awaiting your response.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+
+		// Filter for events where responseStatus is notResponded or none
+		opts := &libgo365.ListEventsOptions{
+			Filter: "responseStatus/response eq 'notResponded' or responseStatus/response eq 'none'",
+		}
+
+		resp, err := client.ListEvents(ctx, opts)
+		if err != nil {
+			return fmt.Errorf("failed to list events: %w", err)
+		}
+
+		if jsonOutput {
+			listResp := output.FormatListResponse(resp.Events, resp.Count, resp.NextPageToken)
+			return output.WriteJSON(os.Stdout, listResp)
+		}
+
+		if len(resp.Events) == 0 {
+			fmt.Println("No pending invitations")
+			return nil
+		}
+
+		fmt.Printf("%d pending invitation(s):\n\n", len(resp.Events))
+
+		for i, event := range resp.Events {
+			idDisplay := event.ID
+			if len(idDisplay) > 12 {
+				idDisplay = idDisplay[:12] + "..."
+			}
+			fmt.Printf("%d. [%s] \"%s\"\n", i+1, idDisplay, event.Subject)
+			if event.Start != nil {
+				fmt.Printf("   When: %s\n", event.Start.DateTime)
+			}
+			if event.Organizer != nil && event.Organizer.EmailAddress != nil {
+				fmt.Printf("   From: %s\n", event.Organizer.EmailAddress.Address)
+			}
+			fmt.Println()
+		}
+
+		return nil
+	},
+}
+
 var calendarFreeBusyCmd = &cobra.Command{
 	Use:   "free-busy <emails>",
 	Short: "Check availability for users",
@@ -1354,6 +1429,11 @@ func init() {
 	calendarEventsCmd.Flags().Bool("json", false, "Output as JSON")
 	calendarEventsCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op for list)")
 	calendarCmd.AddCommand(calendarEventsCmd)
+
+	// calendar pending flags
+	calendarPendingCmd.Flags().Bool("json", false, "Output as JSON")
+	calendarPendingCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op)")
+	calendarCmd.AddCommand(calendarPendingCmd)
 
 	// calendar free-busy flags
 	calendarFreeBusyCmd.Flags().String("start", "", "Start date/time (default: now)")
