@@ -116,3 +116,66 @@ func TestListItemsWithPath(t *testing.T) {
 		t.Fatalf("ListItems failed: %v", err)
 	}
 }
+
+func TestGetItem(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expectedPath := "/me/drive/root:/Documents/report.pdf:"
+		if r.URL.Path != expectedPath {
+			t.Errorf("Expected path %s, got %s", expectedPath, r.URL.Path)
+		}
+
+		item := DriveItem{
+			ID:   "file123",
+			Name: "report.pdf",
+			Size: 1024,
+			File: &FileFacet{MimeType: "application/pdf"},
+		}
+		json.NewEncoder(w).Encode(item)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  server.Client(),
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	item, err := client.GetItem(ctx, "/Documents/report.pdf", nil)
+	if err != nil {
+		t.Fatalf("GetItem failed: %v", err)
+	}
+
+	if item.Name != "report.pdf" {
+		t.Errorf("Expected name 'report.pdf', got '%s'", item.Name)
+	}
+}
+
+func TestGetItemByID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expectedPath := "/me/drive/items/ABC123"
+		if r.URL.Path != expectedPath {
+			t.Errorf("Expected path %s, got %s", expectedPath, r.URL.Path)
+		}
+
+		item := DriveItem{ID: "ABC123", Name: "file.txt"}
+		json.NewEncoder(w).Encode(item)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  server.Client(),
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	item, err := client.GetItem(ctx, "ABC123", nil)
+	if err != nil {
+		t.Fatalf("GetItem failed: %v", err)
+	}
+
+	if item.ID != "ABC123" {
+		t.Errorf("Expected ID 'ABC123', got '%s'", item.ID)
+	}
+}

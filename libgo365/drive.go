@@ -217,6 +217,47 @@ func (c *Client) ListItems(ctx context.Context, pathOrID string, opts *ListItems
 	}, nil
 }
 
+// GetItemOptions represents options for getting an item
+type GetItemOptions struct {
+	UserID  string
+	SiteID  string
+	DriveID string
+}
+
+// GetItem retrieves a single drive item by path or ID
+func (c *Client) GetItem(ctx context.Context, pathOrID string, opts *GetItemOptions) (*DriveItem, error) {
+	var listOpts *ListItemsOptions
+	if opts != nil {
+		listOpts = &ListItemsOptions{
+			UserID:  opts.UserID,
+			SiteID:  opts.SiteID,
+			DriveID: opts.DriveID,
+		}
+	}
+	basePath := c.buildDrivePath(listOpts)
+
+	var path string
+	if isItemID(pathOrID) {
+		path = basePath + fmt.Sprintf("/items/%s", pathOrID)
+	} else {
+		// Path-based access: /drive/root:/path:
+		cleanPath := strings.TrimPrefix(pathOrID, "/")
+		path = basePath + fmt.Sprintf("/root:/%s:", cleanPath)
+	}
+
+	data, err := c.Get(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+
+	var item DriveItem
+	if err := json.Unmarshal(data, &item); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal item: %w", err)
+	}
+
+	return &item, nil
+}
+
 // Silence unused import warnings - will be used in later tasks
 var (
 	_ = io.EOF
