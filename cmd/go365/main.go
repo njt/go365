@@ -938,6 +938,135 @@ var calendarEventsCmd = &cobra.Command{
 	},
 }
 
+var calendarFindTimeCmd = &cobra.Command{
+	Use:   "find-time",
+	Short: "Find available meeting times",
+	Long:  `Find available meeting times across attendees' calendars.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := configMgr.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		authConfig := libgo365.AuthConfig{
+			TenantID: config.TenantID,
+			ClientID: config.ClientID,
+			Scopes:   config.Scopes,
+		}
+
+		auth, err := libgo365.NewAuthenticator(authConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticator: %w", err)
+		}
+
+		ctx := context.Background()
+		if !auth.IsAuthenticated(ctx) {
+			return fmt.Errorf("not authenticated. Please run 'go365 login' first")
+		}
+
+		accessToken, err := auth.GetAccessToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get access token: %w", err)
+		}
+
+		client := libgo365.NewClient(ctx, accessToken)
+
+		attendeesStr, _ := cmd.Flags().GetString("attendees")
+		durationStr, _ := cmd.Flags().GetString("duration")
+		startStr, _ := cmd.Flags().GetString("start")
+		endStr, _ := cmd.Flags().GetString("end")
+		maxResults, _ := cmd.Flags().GetInt("max-results")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+
+		if attendeesStr == "" {
+			return fmt.Errorf("--attendees is required")
+		}
+
+		attendees := strings.Split(attendeesStr, ",")
+		for i := range attendees {
+			attendees[i] = strings.TrimSpace(attendees[i])
+		}
+
+		// Parse duration (default 30m)
+		duration := 30
+		if durationStr != "" {
+			d, err := time.ParseDuration(durationStr)
+			if err != nil {
+				return fmt.Errorf("invalid duration: %w", err)
+			}
+			duration = int(d.Minutes())
+		}
+
+		now := time.Now()
+		var startTime, endTime time.Time
+
+		if startStr == "" {
+			startTime = now.Add(24 * time.Hour) // tomorrow
+		} else {
+			startTime, err = dateparse.Parse(startStr, now)
+			if err != nil {
+				return fmt.Errorf("invalid start time: %w", err)
+			}
+		}
+
+		if endStr == "" {
+			endTime = startTime.Add(7 * 24 * time.Hour) // +7 days
+		} else {
+			endTime, err = dateparse.Parse(endStr, now)
+			if err != nil {
+				return fmt.Errorf("invalid end time: %w", err)
+			}
+		}
+
+		if maxResults == 0 {
+			maxResults = 5
+		}
+
+		opts := &libgo365.FindTimeOptions{
+			Attendees:       attendees,
+			DurationMinutes: duration,
+			StartDateTime:   dateparse.FormatISO8601(startTime),
+			EndDateTime:     dateparse.FormatISO8601(endTime),
+			MaxCandidates:   maxResults,
+		}
+
+		resp, err := client.FindMeetingTimes(ctx, opts)
+		if err != nil {
+			return fmt.Errorf("failed to find meeting times: %w", err)
+		}
+
+		if jsonOutput {
+			return output.WriteJSON(os.Stdout, resp)
+		}
+
+		if len(resp.Suggestions) == 0 {
+			fmt.Println("No available times found")
+			if resp.EmptySuggestionsReason != "" {
+				fmt.Printf("Reason: %s\n", resp.EmptySuggestionsReason)
+			}
+			return nil
+		}
+
+		fmt.Printf("Found %d available slots for %dm meeting:\n\n", len(resp.Suggestions), duration)
+
+		for i, suggestion := range resp.Suggestions {
+			slot := suggestion.MeetingTimeSlot
+			if slot == nil || slot.Start == nil {
+				continue
+			}
+			fmt.Printf("%d. %s - %s\n", i+1, slot.Start.DateTime, slot.End.DateTime)
+			for _, avail := range suggestion.AttendeeAvailability {
+				if avail.Attendee != nil && avail.Attendee.EmailAddress != nil {
+					fmt.Printf("   %s: %s\n", avail.Attendee.EmailAddress.Address, avail.Availability)
+				}
+			}
+			fmt.Println()
+		}
+
+		return nil
+	},
+}
+
 var calendarCreateCmd = &cobra.Command{
 	Use:   "create <subject>",
 	Short: "Create a calendar event",
@@ -1117,6 +1246,16 @@ func init() {
 	calendarEventsCmd.Flags().Bool("json", false, "Output as JSON")
 	calendarEventsCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op for list)")
 	calendarCmd.AddCommand(calendarEventsCmd)
+
+	// calendar find-time flags
+	calendarFindTimeCmd.Flags().String("attendees", "", "Comma-separated email addresses (required)")
+	calendarFindTimeCmd.Flags().String("duration", "30m", "Meeting duration (e.g., 30m, 1h)")
+	calendarFindTimeCmd.Flags().String("start", "", "Search window start (default: tomorrow)")
+	calendarFindTimeCmd.Flags().String("end", "", "Search window end (default: start + 7 days)")
+	calendarFindTimeCmd.Flags().Int("max-results", 5, "Maximum suggestions to return")
+	calendarFindTimeCmd.Flags().Bool("json", false, "Output as JSON")
+	calendarFindTimeCmd.Flags().Bool("markdown", false, "Convert HTML to Markdown (no-op)")
+	calendarCmd.AddCommand(calendarFindTimeCmd)
 
 	// calendar create flags
 	calendarCreateCmd.Flags().String("start", "", "Start date/time (required, accepts natural language)")
