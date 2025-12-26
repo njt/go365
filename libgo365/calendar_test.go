@@ -330,6 +330,64 @@ func TestGetEventEmptyID(t *testing.T) {
 	}
 }
 
+func TestFindMeetingTimes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+
+		if r.URL.Path != "/me/findMeetingTimes" {
+			t.Errorf("Expected path /me/findMeetingTimes, got %s", r.URL.Path)
+		}
+
+		response := FindMeetingTimesResponse{
+			Suggestions: []*MeetingTimeSuggestion{
+				{
+					Confidence: 100,
+					MeetingTimeSlot: &TimeSlot{
+						Start: &DateTimeTimeZone{DateTime: "2025-01-20T10:00:00", TimeZone: "Pacific/Auckland"},
+						End:   &DateTimeTimeZone{DateTime: "2025-01-20T10:30:00", TimeZone: "Pacific/Auckland"},
+					},
+					AttendeeAvailability: []*AttendeeAvailability{
+						{
+							Attendee:     &AttendeeBase{EmailAddress: &EmailAddress{Address: "bob@example.com"}},
+							Availability: "free",
+						},
+					},
+				},
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		httpClient:  &http.Client{},
+		baseURL:     server.URL,
+		accessToken: "test-token",
+	}
+
+	ctx := context.Background()
+	opts := &FindTimeOptions{
+		Attendees:       []string{"bob@example.com"},
+		DurationMinutes: 30,
+		StartDateTime:   "2025-01-20T00:00:00",
+		EndDateTime:     "2025-01-27T00:00:00",
+		MaxCandidates:   5,
+	}
+
+	resp, err := client.FindMeetingTimes(ctx, opts)
+	if err != nil {
+		t.Fatalf("FindMeetingTimes failed: %v", err)
+	}
+
+	if len(resp.Suggestions) != 1 {
+		t.Errorf("Expected 1 suggestion, got %d", len(resp.Suggestions))
+	}
+}
+
 func TestCreateEvent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {

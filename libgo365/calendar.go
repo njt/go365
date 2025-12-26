@@ -101,6 +101,46 @@ type EventList struct {
 	NextLink string   `json:"@odata.nextLink,omitempty"`
 }
 
+// FindTimeOptions represents options for finding meeting times
+type FindTimeOptions struct {
+	Attendees           []string
+	DurationMinutes     int
+	StartDateTime       string
+	EndDateTime         string
+	MaxCandidates       int
+	IsOrganizerOptional bool
+}
+
+// MeetingTimeSuggestion represents a suggested meeting time
+type MeetingTimeSuggestion struct {
+	Confidence           float64                  `json:"confidence"`
+	MeetingTimeSlot      *TimeSlot                `json:"meetingTimeSlot"`
+	AttendeeAvailability []*AttendeeAvailability  `json:"attendeeAvailability"`
+}
+
+// TimeSlot represents a time slot
+type TimeSlot struct {
+	Start *DateTimeTimeZone `json:"start"`
+	End   *DateTimeTimeZone `json:"end"`
+}
+
+// AttendeeAvailability represents an attendee's availability for a slot
+type AttendeeAvailability struct {
+	Attendee     *AttendeeBase `json:"attendee"`
+	Availability string        `json:"availability"` // free, tentative, busy, oof, unknown
+}
+
+// AttendeeBase represents basic attendee info
+type AttendeeBase struct {
+	EmailAddress *EmailAddress `json:"emailAddress"`
+}
+
+// FindMeetingTimesResponse represents the response from findMeetingTimes
+type FindMeetingTimesResponse struct {
+	Suggestions            []*MeetingTimeSuggestion `json:"meetingTimeSuggestions"`
+	EmptySuggestionsReason string                   `json:"emptySuggestionsReason,omitempty"`
+}
+
 // CalendarList represents a list of calendars returned by Graph API
 type CalendarList struct {
 	Value []*Calendar `json:"value"`
@@ -217,6 +257,79 @@ func (c *Client) ListCalendars(ctx context.Context) ([]*Calendar, error) {
 	}
 
 	return calendarList.Value, nil
+}
+
+// FindMeetingTimes finds available meeting times for attendees
+func (c *Client) FindMeetingTimes(ctx context.Context, opts *FindTimeOptions) (*FindMeetingTimesResponse, error) {
+	if opts == nil {
+		return nil, fmt.Errorf("options are required")
+	}
+	if len(opts.Attendees) == 0 {
+		return nil, fmt.Errorf("at least one attendee is required")
+	}
+
+	// Build request body
+	type attendeeType struct {
+		EmailAddress EmailAddress `json:"emailAddress"`
+		Type         string       `json:"type"`
+	}
+	type timeConstraint struct {
+		ActivityDomain string `json:"activityDomain"`
+		TimeSlots      []struct {
+			Start DateTimeTimeZone `json:"start"`
+			End   DateTimeTimeZone `json:"end"`
+		} `json:"timeSlots"`
+	}
+	type requestBody struct {
+		Attendees           []attendeeType  `json:"attendees"`
+		TimeConstraint      *timeConstraint `json:"timeConstraint,omitempty"`
+		MeetingDuration     string          `json:"meetingDuration,omitempty"`
+		MaxCandidates       int             `json:"maxCandidates,omitempty"`
+		IsOrganizerOptional bool            `json:"isOrganizerOptional,omitempty"`
+	}
+
+	body := requestBody{
+		MaxCandidates:       opts.MaxCandidates,
+		IsOrganizerOptional: opts.IsOrganizerOptional,
+	}
+
+	for _, email := range opts.Attendees {
+		body.Attendees = append(body.Attendees, attendeeType{
+			EmailAddress: EmailAddress{Address: email},
+			Type:         "required",
+		})
+	}
+
+	if opts.DurationMinutes > 0 {
+		body.MeetingDuration = fmt.Sprintf("PT%dM", opts.DurationMinutes)
+	}
+
+	if opts.StartDateTime != "" && opts.EndDateTime != "" {
+		body.TimeConstraint = &timeConstraint{
+			ActivityDomain: "work",
+			TimeSlots: []struct {
+				Start DateTimeTimeZone `json:"start"`
+				End   DateTimeTimeZone `json:"end"`
+			}{
+				{
+					Start: DateTimeTimeZone{DateTime: opts.StartDateTime, TimeZone: "UTC"},
+					End:   DateTimeTimeZone{DateTime: opts.EndDateTime, TimeZone: "UTC"},
+				},
+			},
+		}
+	}
+
+	data, err := c.Post(ctx, "/me/findMeetingTimes", body)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp FindMeetingTimesResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &resp, nil
 }
 
 // CreateEvent creates a new calendar event
