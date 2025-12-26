@@ -69,6 +69,7 @@ type CalendarViewOptions struct {
 	AllCalendars  bool   // Query all calendars
 	Top           int
 	PageToken     string
+	UserID        string // Email or user ID for accessing another user's calendar
 }
 
 // CalendarViewResponse represents the response from CalendarView with pagination info
@@ -190,9 +191,19 @@ func (c *Client) CalendarView(ctx context.Context, opts *CalendarViewOptions) (*
 
 // calendarViewSingle retrieves events from a single calendar
 func (c *Client) calendarViewSingle(ctx context.Context, opts *CalendarViewOptions) (*CalendarViewResponse, error) {
-	path := "/me/calendarView"
-	if opts.CalendarID != "" {
-		path = fmt.Sprintf("/me/calendars/%s/calendarView", opts.CalendarID)
+	var path string
+	if opts.UserID != "" {
+		if opts.CalendarID != "" {
+			path = fmt.Sprintf("/users/%s/calendars/%s/calendarView", opts.UserID, opts.CalendarID)
+		} else {
+			path = fmt.Sprintf("/users/%s/calendarView", opts.UserID)
+		}
+	} else {
+		if opts.CalendarID != "" {
+			path = fmt.Sprintf("/me/calendars/%s/calendarView", opts.CalendarID)
+		} else {
+			path = "/me/calendarView"
+		}
 	}
 
 	params := url.Values{}
@@ -501,15 +512,40 @@ func (c *Client) ListEvents(ctx context.Context, opts *ListEventsOptions) (*List
 	}, nil
 }
 
+// GetEventOptions represents options for getting an event
+type GetEventOptions struct {
+	EventID    string
+	CalendarID string
+	UserID     string
+}
+
 // GetEvent retrieves a specific event by ID
 func (c *Client) GetEvent(ctx context.Context, eventID string, calendarID string) (*Event, error) {
-	if eventID == "" {
+	return c.GetEventWithOptions(ctx, &GetEventOptions{
+		EventID:    eventID,
+		CalendarID: calendarID,
+	})
+}
+
+// GetEventWithOptions retrieves a specific event with additional options
+func (c *Client) GetEventWithOptions(ctx context.Context, opts *GetEventOptions) (*Event, error) {
+	if opts == nil || opts.EventID == "" {
 		return nil, fmt.Errorf("event ID is required")
 	}
 
-	path := fmt.Sprintf("/me/events/%s", eventID)
-	if calendarID != "" {
-		path = fmt.Sprintf("/me/calendars/%s/events/%s", calendarID, eventID)
+	var path string
+	if opts.UserID != "" {
+		if opts.CalendarID != "" {
+			path = fmt.Sprintf("/users/%s/calendars/%s/events/%s", opts.UserID, opts.CalendarID, opts.EventID)
+		} else {
+			path = fmt.Sprintf("/users/%s/events/%s", opts.UserID, opts.EventID)
+		}
+	} else {
+		if opts.CalendarID != "" {
+			path = fmt.Sprintf("/me/calendars/%s/events/%s", opts.CalendarID, opts.EventID)
+		} else {
+			path = fmt.Sprintf("/me/events/%s", opts.EventID)
+		}
 	}
 
 	data, err := c.Get(ctx, path)

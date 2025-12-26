@@ -605,6 +605,7 @@ var calendarListCmd = &cobra.Command{
 		top, _ := cmd.Flags().GetInt("top")
 		pageToken, _ := cmd.Flags().GetString("page-token")
 		jsonOutput, _ := cmd.Flags().GetBool("json")
+		userID, _ := cmd.Flags().GetString("user")
 		// --markdown is accepted but is a no-op for list (no body content)
 
 		// Parse start date (default: today)
@@ -641,6 +642,7 @@ var calendarListCmd = &cobra.Command{
 			AllCalendars:  allCalendars,
 			Top:           top,
 			PageToken:     pageToken,
+			UserID:        userID,
 		}
 
 		resp, err := client.CalendarView(ctx, opts)
@@ -733,8 +735,13 @@ var calendarGetCmd = &cobra.Command{
 		calendarID, _ := cmd.Flags().GetString("calendar-id")
 		jsonOutput, _ := cmd.Flags().GetBool("json")
 		markdownOutput, _ := cmd.Flags().GetBool("markdown")
+		userID, _ := cmd.Flags().GetString("user")
 
-		event, err := client.GetEvent(ctx, eventID, calendarID)
+		event, err := client.GetEventWithOptions(ctx, &libgo365.GetEventOptions{
+			EventID:    eventID,
+			CalendarID: calendarID,
+			UserID:     userID,
+		})
 		if err != nil {
 			return fmt.Errorf("failed to get event: %w", err)
 		}
@@ -1091,11 +1098,8 @@ var calendarPendingCmd = &cobra.Command{
 		fmt.Printf("%d pending invitation(s):\n\n", len(resp.Events))
 
 		for i, event := range resp.Events {
-			idDisplay := event.ID
-			if len(idDisplay) > 12 {
-				idDisplay = idDisplay[:12] + "..."
-			}
-			fmt.Printf("%d. [%s] \"%s\"\n", i+1, idDisplay, event.Subject)
+			fmt.Printf("%d. %s\n", i+1, event.Subject)
+			fmt.Printf("   ID: %s\n", event.ID)
 			if event.Start != nil {
 				fmt.Printf("   When: %s\n", event.Start.DateTime)
 			}
@@ -1504,11 +1508,13 @@ func init() {
 	calendarListCmd.Flags().String("page-token", "", "Pagination token from previous response")
 	calendarListCmd.Flags().Bool("json", false, "Output as JSON")
 	calendarListCmd.Flags().Bool("markdown", false, "Convert HTML body to Markdown (no-op for list)")
+	calendarListCmd.Flags().String("user", "", "View another user's calendar (email or ID)")
 
 	// calendar get flags
 	calendarGetCmd.Flags().String("calendar-id", "", "Calendar containing the event (default: primary)")
 	calendarGetCmd.Flags().Bool("json", false, "Output as JSON")
 	calendarGetCmd.Flags().Bool("markdown", false, "Convert HTML body to Markdown")
+	calendarGetCmd.Flags().String("user", "", "View another user's calendar event (email or ID)")
 
 	calendarCmd.AddCommand(calendarListCmd)
 	calendarCmd.AddCommand(calendarGetCmd)
